@@ -5,6 +5,7 @@ import ImagingCore
 
 /// Faz 1 main surface: drop zone + controls + progress + result.
 /// Bound to `UpscaleViewModel` (single source of truth).
+@MainActor
 public struct MainView: View {
     @State private var viewModel = UpscaleViewModel()
     @State private var showFileImporter = false

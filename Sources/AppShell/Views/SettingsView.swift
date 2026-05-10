@@ -1,6 +1,7 @@
 import SwiftUI
 import ImagingCore
 
+@MainActor
 public struct SettingsView: View {
     @Bindable private var settings = SettingsStore.shared
 

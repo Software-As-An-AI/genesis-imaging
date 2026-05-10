@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import ImagingCore
 
+@MainActor
 public struct HistoryView: View {
     @State private var viewModel = HistoryViewModel()
     @State private var showClearConfirm = false
