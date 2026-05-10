@@ -1,0 +1,15 @@
+{
+  "project_slug": "genesis-imaging",
+  "project_name": "Genesis Imaging",
+  "genesis_root": "/Users/okan.yucel/Desktop/genesisv3",
+  "initialized_at": "2026-05-10T07:57:27Z",
+  "initialized_by": "genesis_new_project.sh",
+  "experience_db_registered": false,
+  "ports": {
+    "backend": 12019,
+    "frontend": 22019
+  },
+  "tech_stack": [],
+  "github_repo": "",
+  "config_file": "/Users/okan.yucel/Desktop/genesis-imaging/genesis.json"
+}

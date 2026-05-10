@@ -1,0 +1,43 @@
+{
+  "project": {
+    "name": "Genesis Imaging",
+    "slug": "genesis-imaging",
+    "type": "macos-native",
+    "description": "On-device image upscaling for macOS — Real-ESRGAN ncnn (Faz 1), Core ML (Faz 2). First consumer of ImagingCore substrate.",
+    "github": "Software-As-An-AI/genesis-imaging",
+    "agent": "genesis-imaging-worker"
+  },
+  "services": {},
+  "platform": {
+    "os": "macos",
+    "min_version": "13.0",
+    "architecture": ["arm64"],
+    "build_system": "swiftpm",
+    "package_manager": "homebrew (create-dmg only)"
+  },
+  "deployment": {
+    "platform": "github-releases",
+    "signing": "developer-id-application",
+    "notarization": true,
+    "auto_update": false
+  },
+  "phases": {
+    "current": "Faz 1",
+    "faz_1": {
+      "engine": "ncnn-vulkan-subprocess",
+      "model_default": "realesrgan-x4plus",
+      "status": "in-development"
+    },
+    "faz_2": {
+      "engine": "core-ml",
+      "target_device": "apple-neural-engine",
+      "status": "planned"
+    }
+  },
+  "doctrine_anchors": [
+    "wisdom_f5c4cf13:vendor-aligned-architecture",
+    "wisdom_d33f4c01:permanence-stack-p090",
+    "wisdom_57088846:once-and-for-all",
+    "VIS-016:genesis-kulucka-edition-pattern"
+  ]
+}
