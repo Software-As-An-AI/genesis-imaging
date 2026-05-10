@@ -31,95 +31,114 @@ public final class NcnnEngine: UpscaleEngine, @unchecked Sendable {
 
     public func upscale(request: UpscaleRequest) -> AsyncThrowingStream<UpscaleProgress, Error> {
         AsyncThrowingStream { continuation in
-            let process = Process()
-            process.executableURL = self.binaryURL
-            process.arguments = Self.buildArguments(
-                request: request, modelsDirectory: self.modelsDirectory
-            )
-
-            let stderrPipe = Pipe()
-            let stderrAccumulator = StderrAccumulator()
-            process.standardError = stderrPipe
-            process.standardOutput = FileHandle.nullDevice
-
-            let parser = ProgressParser { percent in
-                continuation.yield(.percentage(percent))
-            }
-
-            // Stream stderr → parser as it arrives.
-            stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                guard !data.isEmpty else { return }
-                stderrAccumulator.append(data)
-                if let chunk = String(data: data, encoding: .utf8) {
-                    parser.feed(chunk)
-                }
-            }
-
-            // Cancellation: interrupt + (after grace) terminate.
-            continuation.onTermination = { @Sendable _ in
-                if process.isRunning {
-                    process.interrupt()  // SIGINT — graceful
-                    DispatchQueue.global().asyncAfter(deadline: .now() + 3.0) {
-                        if process.isRunning { process.terminate() }  // SIGTERM
-                    }
-                }
-            }
-
-            let startTime = Date()
-            continuation.yield(.started)
-
-            do {
-                try process.run()
-            } catch {
-                stderrPipe.fileHandleForReading.readabilityHandler = nil
-                continuation.finish(throwing: UpscaleError.ioError(message: "\(error)"))
-                return
-            }
-
-            // waitUntilExit blocks the calling thread; AsyncThrowingStream's
-            // continuation pattern runs this in its own context, which is fine.
-            process.waitUntilExit()
-            stderrPipe.fileHandleForReading.readabilityHandler = nil
-            parser.flush()
-
-            let exitCode = process.terminationStatus
-            let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
-
-            // ncnn-vulkan v0.2.0 has unreliable exit codes — it returns 0 even when
-            // the input file can't be decoded or the model isn't found. We must
-            // validate the output ourselves and grep stderr for known failure markers.
-            let stderrText = stderrAccumulator.utf8String
-            let outputBytes = Self.fileSize(at: request.outputURL)
-            let stderrSuggestsFailure = Self.stderrIndicatesFailure(stderrText)
-
-            if exitCode == SIGINT || exitCode == SIGTERM {
-                continuation.finish(throwing: UpscaleError.cancelled)
-            } else if exitCode != 0 {
-                continuation.finish(throwing: UpscaleError.engineFailure(
-                    exitCode: exitCode, stderr: stderrText
-                ))
-            } else if outputBytes == 0 || stderrSuggestsFailure {
-                // Exit 0 but no real success — synthesize an engineFailure with the
-                // diagnostic text so the caller sees the underlying problem.
-                continuation.finish(throwing: UpscaleError.engineFailure(
-                    exitCode: 0,
-                    stderr: stderrText.isEmpty
-                        ? "ncnn returned exit 0 but output file is empty/missing"
-                        : stderrText
-                ))
-            } else {
-                let inputBytes = Self.fileSize(at: request.inputURL)
-                let result = UpscaleResult(
-                    outputURL: request.outputURL,
-                    inputBytes: inputBytes,
-                    outputBytes: outputBytes,
-                    durationMs: durationMs,
-                    engineName: "ncnn-vulkan-v0.2.0"
+            // CRITICAL: AsyncThrowingStream's build closure runs synchronously on the
+            // *consumer's* thread. If consumer is `@MainActor` (UI), running
+            // `process.waitUntilExit()` here would freeze the window for the full
+            // upscale duration. Hand the entire subprocess lifecycle to a background
+            // queue; the continuation handle is Sendable and can be yielded into
+            // from any thread.
+            let binaryURL = self.binaryURL
+            let modelsDirectory = self.modelsDirectory
+            DispatchQueue.global(qos: .userInitiated).async {
+                Self.runSubprocess(
+                    request: request,
+                    binaryURL: binaryURL,
+                    modelsDirectory: modelsDirectory,
+                    continuation: continuation
                 )
-                continuation.yield(.completed(result))
-                continuation.finish()
             }
+        }
+    }
+
+    /// All Process I/O lives on a background queue so SwiftUI's main thread stays free.
+    private static func runSubprocess(
+        request: UpscaleRequest,
+        binaryURL: URL,
+        modelsDirectory: URL,
+        continuation: AsyncThrowingStream<UpscaleProgress, Error>.Continuation
+    ) {
+        let process = Process()
+        process.executableURL = binaryURL
+        process.arguments = buildArguments(request: request, modelsDirectory: modelsDirectory)
+
+        let stderrPipe = Pipe()
+        let stderrAccumulator = StderrAccumulator()
+        process.standardError = stderrPipe
+        process.standardOutput = FileHandle.nullDevice
+
+        let parser = ProgressParser { percent in
+            continuation.yield(.percentage(percent))
+        }
+
+        // Stream stderr → parser as it arrives.
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            stderrAccumulator.append(data)
+            if let chunk = String(data: data, encoding: .utf8) {
+                parser.feed(chunk)
+            }
+        }
+
+        // Cancellation: interrupt + (after grace) terminate.
+        continuation.onTermination = { @Sendable _ in
+            if process.isRunning {
+                process.interrupt()  // SIGINT — graceful
+                DispatchQueue.global().asyncAfter(deadline: .now() + 3.0) {
+                    if process.isRunning { process.terminate() }  // SIGTERM
+                }
+            }
+        }
+
+        let startTime = Date()
+        continuation.yield(.started)
+
+        do {
+            try process.run()
+        } catch {
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            continuation.finish(throwing: UpscaleError.ioError(message: "\(error)"))
+            return
+        }
+
+        process.waitUntilExit()
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
+        parser.flush()
+
+        let exitCode = process.terminationStatus
+        let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
+
+        // ncnn-vulkan v0.2.0 has unreliable exit codes — it returns 0 even when
+        // the input file can't be decoded or the model isn't found. Validate
+        // output existence + grep stderr for known failure markers.
+        let stderrText = stderrAccumulator.utf8String
+        let outputBytes = fileSize(at: request.outputURL)
+        let stderrSuggestsFailure = stderrIndicatesFailure(stderrText)
+
+        if exitCode == SIGINT || exitCode == SIGTERM {
+            continuation.finish(throwing: UpscaleError.cancelled)
+        } else if exitCode != 0 {
+            continuation.finish(throwing: UpscaleError.engineFailure(
+                exitCode: exitCode, stderr: stderrText
+            ))
+        } else if outputBytes == 0 || stderrSuggestsFailure {
+            continuation.finish(throwing: UpscaleError.engineFailure(
+                exitCode: 0,
+                stderr: stderrText.isEmpty
+                    ? "ncnn returned exit 0 but output file is empty/missing"
+                    : stderrText
+            ))
+        } else {
+            let inputBytes = fileSize(at: request.inputURL)
+            let result = UpscaleResult(
+                outputURL: request.outputURL,
+                inputBytes: inputBytes,
+                outputBytes: outputBytes,
+                durationMs: durationMs,
+                engineName: "ncnn-vulkan-v0.2.0"
+            )
+            continuation.yield(.completed(result))
+            continuation.finish()
         }
     }
 
@@ -160,7 +179,7 @@ public final class NcnnEngine: UpscaleEngine, @unchecked Sendable {
         ]
     }
 
-    private static func fileSize(at url: URL) -> Int {
+    static func fileSize(at url: URL) -> Int {
         (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
     }
 

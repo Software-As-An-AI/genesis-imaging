@@ -110,8 +110,10 @@ public final class UpscaleViewModel {
                 case .completed(let result):
                     progress = 1.0
                     state = .completed(result.outputURL)
+                    await Self.notifyCompleted(result: result, request: request)
                 case .failed(let err):
                     state = .failed(Self.describe(err))
+                    await Notifier.shared.errorChime()
                 }
             }
             // Stream ended without explicit completion event but no error —
@@ -123,9 +125,19 @@ public final class UpscaleViewModel {
             state = .failed("Cancelled")
         } catch let error as UpscaleError {
             state = .failed(Self.describe(error))
+            await Notifier.shared.errorChime()
         } catch {
             state = .failed("\(error)")
+            await Notifier.shared.errorChime()
         }
+    }
+
+    private static func notifyCompleted(result: UpscaleResult, request: UpscaleRequest) async {
+        let inputName = request.inputURL.lastPathComponent
+        let durationSec = Double(result.durationMs) / 1000.0
+        let body = String(format: "%@ → %d× upscaled in %.1f s",
+                          inputName, request.scale, durationSec)
+        await Notifier.shared.notify(title: "Genesis Imaging", body: body)
     }
 
     // MARK: - Helpers

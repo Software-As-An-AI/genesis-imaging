@@ -1,10 +1,10 @@
 {
-  "version": "0.1.2.0",
+  "version": "0.1.3.0",
   "project": {
     "name": "Genesis Imaging",
     "slug": "genesis-imaging",
     "type": "macos-native",
-    "description": "On-device image upscaling for macOS — Real-ESRGAN ncnn (Faz 1), Core ML (Faz 2). First consumer of ImagingCore substrate.",
+    "description": "On-device image upscaling for macOS \u2014 Real-ESRGAN ncnn (Faz 1), Core ML (Faz 2). First consumer of ImagingCore substrate.",
     "github": "Software-As-An-AI/genesis-imaging",
     "agent": "genesis-imaging-worker"
   },
@@ -12,7 +12,9 @@
   "platform": {
     "os": "macos",
     "min_version": "14.0",
-    "architecture": ["arm64"],
+    "architecture": [
+      "arm64"
+    ],
     "build_system": "swiftpm",
     "package_manager": "homebrew (create-dmg only)"
   },
