@@ -23,7 +23,15 @@ let package = Package(
         ),
         .target(
             name: "CoreMLEngine",
-            dependencies: ["ImagingCore"]
+            dependencies: ["ImagingCore"],
+            linkerSettings: [
+                .linkedFramework("CoreML"),
+                .linkedFramework("Vision"),
+                .linkedFramework("Accelerate"),
+                .linkedFramework("CoreGraphics"),
+                .linkedFramework("ImageIO"),
+                .linkedFramework("UniformTypeIdentifiers"),
+            ]
         ),
         .executableTarget(
             name: "AppShell",
@@ -36,6 +44,11 @@ let package = Package(
         .testTarget(
             name: "NcnnEngineTests",
             dependencies: ["NcnnEngine"],
+            resources: [.process("Resources")]
+        ),
+        .testTarget(
+            name: "CoreMLEngineTests",
+            dependencies: ["CoreMLEngine", "ImagingCore"],
             resources: [.process("Resources")]
         ),
     ]

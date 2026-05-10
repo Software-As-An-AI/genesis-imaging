@@ -1,0 +1,50 @@
+[
+  {
+    "path": "/Users/okan.yucel/Desktop/genesis-imaging/tools/coreml-conversion/hf-model/RealESRGAN.mlmodel",
+    "exists": true,
+    "size_mb": 63.76,
+    "spec_type": "neuralNetwork",
+    "is_mlprogram": false,
+    "spec_version": 4,
+    "inputs": [
+      {
+        "name": "input",
+        "type": "imageType",
+        "info": "image 512x512 color=20"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "activation_out",
+        "type": "imageType",
+        "info": "image 2048x2048 color=20"
+      }
+    ],
+    "ops": {
+      "convolution": 351,
+      "activation": 280,
+      "concat": 276,
+      "add": 93,
+      "multiply": 23,
+      "upsample": 2,
+      "squeeze": 1
+    },
+    "ops_classification": {
+      "friendly": 722,
+      "limited": 0,
+      "incompatible": 0,
+      "unknown": 304
+    },
+    "smoke": {
+      "attempted": true,
+      "ok": true,
+      "latency_ms": 647.78,
+      "error": null
+    },
+    "ane_score": {
+      "friendly_ratio": 0.704,
+      "incompatible_op_count": 0,
+      "verdict": "LIMITED"
+    }
+  }
+]

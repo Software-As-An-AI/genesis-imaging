@@ -46,3 +46,25 @@ notarization-log.json
 BUILD_INFO.json
 # ncnn version marker — produced by fetch-ncnn-binary.sh after install
 Resources/bin/.ncnn-version
+# Step 0 spike workspace — Python venv + downloaded artifacts ignored,
+# inspection scripts + SPIKE_REPORT.md committed as substrate.
+tools/coreml-conversion/.venv/
+tools/coreml-conversion/*.pth
+tools/coreml-conversion/*.mlmodel
+tools/coreml-conversion/*.mlmodelc
+tools/coreml-conversion/*.mlmodelc/
+tools/coreml-conversion/*.mlpackage
+tools/coreml-conversion/*.zip
+tools/coreml-conversion/hf-model/
+tools/coreml-conversion/out_*.png
+tools/coreml-conversion/fixture-*.png
+tools/coreml-conversion/*.txt
+
+# Bundled Core ML model — fetch-coreml-model.sh downloads + compiles.
+# .mlmodel source is removed after compile; .mlmodelc is the runtime artifact.
+Resources/models/*.mlmodel
+Resources/models/*.mlpackage
+Resources/models/*.mlmodelc
+Resources/models/*.mlmodelc/
+Resources/models/.coreml-version
+.build/cache/coreml/

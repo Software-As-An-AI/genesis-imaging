@@ -84,12 +84,16 @@ public final class UpscaleViewModel {
     // MARK: - Stream consumer
 
     private func runStream(request: UpscaleRequest) async {
+        let preference = EnginePreference.from(rawValue: SettingsStore.shared.enginePreference)
         let engine: any UpscaleEngine
         do {
-            engine = try EngineFactory.makeEngine(preference: .ncnn)
+            engine = try EngineFactory.makeEngine(preference: preference)
             engineName = engine.engineName
         } catch let UpscaleError.binaryNotFound(path) {
             state = .failed("Engine binary not found: \(path)")
+            return
+        } catch let UpscaleError.modelNotFound(name) {
+            state = .failed("Engine model not found: \(name). Run scripts/fetch-coreml-model.sh.")
             return
         } catch {
             state = .failed("Engine init failed: \(error)")

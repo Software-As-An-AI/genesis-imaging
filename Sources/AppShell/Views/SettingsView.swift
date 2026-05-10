@@ -19,11 +19,14 @@ public struct SettingsView: View {
         Form {
             Section("Motor (Engine)") {
                 Picker("Tercih edilen motor", selection: $settings.enginePreference) {
-                    Text("ncnn").tag("ncnn")
-                    Text("CoreML (Faz 2 — yakında)").tag("coreml")
-                        .disabled(true)
+                    Text("ncnn-vulkan (Faz 1)").tag("ncnn")
+                    Text("Core ML (Faz 2 — Apple Silicon)").tag("coreml")
                 }
                 .pickerStyle(.menu)
+
+                Text(engineHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Varsayılanlar") {
@@ -79,5 +82,14 @@ public struct SettingsView: View {
     private var ncnnBinaryVersion: String {
         // Faz 1 placeholder — real version surfaced via NcnnEngine.probe() in Faz 2 wire-up.
         "realesrgan-ncnn-vulkan v0.2.0"
+    }
+
+    private var engineHint: String {
+        switch settings.enginePreference {
+        case "coreml":
+            return "Core ML, Apple Silicon ANE/GPU üzerinden çalışır. M4 Pro deneyiminde ncnn'den ~5× daha hızlı (Step 0 spike). 4× upscale."
+        default:
+            return "ncnn-vulkan subprocess, MoltenVK → Metal GPU. 2× / 3× / 4× upscale, 5 model varyantı."
+        }
     }
 }
