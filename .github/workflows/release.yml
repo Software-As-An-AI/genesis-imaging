@@ -155,15 +155,16 @@ jobs:
 
       - uses: actions/download-artifact@v5
         with:
-          path: artifacts/
+          name: genesis-imaging-darwin-arm64
+          path: release/
 
       - name: Prepare release assets
         run: |
-          mkdir -p release
-          for dir in artifacts/genesis-imaging-*; do
-            cp "$dir"/* release/ 2>/dev/null || true
-          done
           ls -la release/
+          if [ -z "$(ls -A release/)" ]; then
+            echo "::error::release/ is empty — artifact download failed"
+            exit 1
+          fi
           cd release && shasum -a 256 * > checksums.txt
 
       - name: Generate release notes
