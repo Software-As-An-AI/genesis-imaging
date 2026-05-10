@@ -1,0 +1,216 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcrun --show-sdk-path
+
+      - name: Cache ncnn binary download
+        uses: actions/cache@v4
+        with:
+          path: .build/cache/ncnn
+          key: ncnn-vulkan-20220424-${{ runner.os }}
+
+      - name: Fetch ncnn-vulkan binary + models
+        run: ./scripts/fetch-ncnn-binary.sh
+
+      - name: Build executable (release)
+        run: |
+          swift build -c release
+          ls -lh .build/release/
+
+      - name: Package macOS .app
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: ./scripts/package-app.sh
+
+      - name: Sign, Notarize & Package DMG
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_DEVELOPER_NAME: ${{ secrets.APPLE_DEVELOPER_NAME }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          APP="build/GenesisImaging.app"
+          DMG="genesis-imaging-darwin-arm64.dmg"
+          ARTIFACT="genesis-imaging-darwin-arm64"
+
+          _create_dmg() {
+            brew install create-dmg
+            mkdir -p dmg-staging
+            cp -R "${APP}" dmg-staging/
+            create-dmg \
+              --volname "Genesis Imaging" \
+              --window-pos 200 120 \
+              --window-size 560 400 \
+              --icon-size 100 \
+              --icon "GenesisImaging.app" 140 200 \
+              --app-drop-link 420 200 \
+              --no-internet-enable \
+              "${DMG}" "dmg-staging/" || true
+            rm -rf dmg-staging
+          }
+
+          if [ -z "$APPLE_CERTIFICATE_BASE64" ]; then
+            echo "::warning::Apple signing secrets not configured — producing unsigned build"
+            _create_dmg || true
+            ditto -c -k --sequesterRsrc --keepParent "${APP}" "${ARTIFACT}.zip"
+            ls -lh ${ARTIFACT}.* 2>/dev/null || true
+            exit 0
+          fi
+
+          KEYCHAIN="build.keychain"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -t 3600 -u "$KEYCHAIN"
+
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > certificate.p12
+          security import certificate.p12 -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/xcrun
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          rm certificate.p12
+
+          IDENTITY="Developer ID Application: ${APPLE_DEVELOPER_NAME} (${APPLE_TEAM_ID})"
+          echo "Signing with: $IDENTITY"
+
+          codesign --force --options runtime --timestamp \
+            --sign "$IDENTITY" "${APP}/Contents/Resources/bin/realesrgan-ncnn-vulkan"
+          codesign --force --options runtime --timestamp \
+            --sign "$IDENTITY" "${APP}/Contents/MacOS/GenesisImaging"
+          codesign --force --options runtime --timestamp \
+            --sign "$IDENTITY" "${APP}"
+          codesign --verify --deep --strict --verbose=2 "${APP}"
+          echo "✅ .app signed"
+
+          ditto -c -k --sequesterRsrc --keepParent "${APP}" "${ARTIFACT}-notarize.zip"
+          xcrun notarytool submit "${ARTIFACT}-notarize.zip" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait --timeout 600
+          rm "${ARTIFACT}-notarize.zip"
+          xcrun stapler staple "${APP}"
+          xcrun stapler validate "${APP}"
+          echo "✅ .app notarized + stapled"
+
+          _create_dmg
+
+          if [ -f "${DMG}" ]; then
+            codesign --force --sign "$IDENTITY" "${DMG}"
+            codesign --verify --verbose=2 "${DMG}"
+            echo "✅ DMG signed"
+
+            xcrun notarytool submit "${DMG}" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait --timeout 600
+            xcrun stapler staple "${DMG}"
+            echo "✅ DMG notarized + stapled"
+          else
+            echo "::warning::DMG creation failed — zip-only distribution"
+          fi
+
+          ditto -c -k --sequesterRsrc --keepParent "${APP}" "${ARTIFACT}.zip"
+          ls -lh ${ARTIFACT}.* 2>/dev/null || true
+
+          security delete-keychain "$KEYCHAIN"
+
+      - name: List release artifacts
+        run: ls -lh genesis-imaging-darwin-arm64.* 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: genesis-imaging-darwin-arm64
+          path: genesis-imaging-darwin-arm64.*
+          retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v5
+        with:
+          path: artifacts/
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          for dir in artifacts/genesis-imaging-*; do
+            cp "$dir"/* release/ 2>/dev/null || true
+          done
+          ls -la release/
+          cd release && shasum -a 256 * > checksums.txt
+
+      - name: Generate release notes
+        env:
+          CURRENT_TAG: ${{ github.ref_name }}
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 "${CURRENT_TAG}^" 2>/dev/null || echo "")
+
+          if [ -n "$PREV_TAG" ]; then
+            COMMITS=$(git log --pretty=format:"- %s" "${PREV_TAG}..${CURRENT_TAG}" --no-merges \
+              | grep -v "Co-Authored-By" \
+              | grep -v "skip-release" \
+              | head -30)
+          else
+            COMMITS=$(git log --pretty=format:"- %s" -10 --no-merges \
+              | grep -v "Co-Authored-By" \
+              | head -10)
+          fi
+
+          FEATURES=$(echo "$COMMITS" | grep -i "^- feat" | sed -E 's/^- feat(\([^)]*\))?: */- /' || true)
+          FIXES=$(echo "$COMMITS" | grep -i "^- fix" | sed -E 's/^- fix(\([^)]*\))?: */- /' || true)
+          OTHER=$(echo "$COMMITS" | grep -iv "^- feat\|^- fix\|^- ci\|^- chore\|^- docs" || true)
+
+          {
+            echo "## Genesis Imaging ${CURRENT_TAG}"
+            echo
+            echo "On-device image upscaling for macOS — Apple Silicon native."
+            if [ -n "$FEATURES" ]; then echo; echo "### Yenilikler"; echo "$FEATURES"; fi
+            if [ -n "$FIXES" ];    then echo; echo "### Düzeltmeler"; echo "$FIXES";    fi
+            if [ -n "$OTHER" ];    then echo; echo "### Diğer";       echo "$OTHER";    fi
+            echo
+            echo "---"
+            echo
+            echo "### macOS Kurulum"
+            echo "1. **DMG** dosyasını indirin"
+            echo "2. DMG'yi açın, **Genesis Imaging** simgesini **Applications** klasörüne sürükleyin"
+            echo "3. Uygulamayı başlatın"
+            echo
+            echo "> Apple Silicon (M1+) gerekir, macOS 14.0+ önerilir."
+            echo
+            echo "Doğrulama: SHA256 değerleri \`checksums.txt\` içinde."
+          } > /tmp/release-notes.md
+
+          cat /tmp/release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          body_path: /tmp/release-notes.md

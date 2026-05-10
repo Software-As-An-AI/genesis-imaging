@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Sources/**'
+      - 'Tests/**'
+      - 'Package.swift'
+      - 'scripts/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift-test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcrun --show-sdk-path
+
+      - name: Cache ncnn binary download
+        id: cache-ncnn
+        uses: actions/cache@v4
+        with:
+          path: .build/cache/ncnn
+          key: ncnn-vulkan-20220424-${{ runner.os }}
+
+      - name: Fetch ncnn-vulkan binary + models
+        run: ./scripts/fetch-ncnn-binary.sh
+
+      - name: Build (debug)
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      - name: Build (release smoke)
+        run: swift build -c release
