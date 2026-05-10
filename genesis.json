@@ -1,4 +1,5 @@
 {
+  "version": "0.1.2.0",
   "project": {
     "name": "Genesis Imaging",
     "slug": "genesis-imaging",
@@ -10,7 +11,7 @@
   "services": {},
   "platform": {
     "os": "macos",
-    "min_version": "13.0",
+    "min_version": "14.0",
     "architecture": ["arm64"],
     "build_system": "swiftpm",
     "package_manager": "homebrew (create-dmg only)"

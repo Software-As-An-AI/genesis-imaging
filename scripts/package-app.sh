@@ -20,13 +20,19 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-VERSION="${VERSION:-0.0.0-dev}"
-VERSION="${VERSION#v}"  # strip leading "v" if tag-like
+# VERSION resolution:
+#   1. Explicit env override (CI passes ${{ github.ref_name }})
+#   2. genesis.json (4-digit Genesis-canonical SSOT)
+#   3. Final fallback: 0.0.0-dev
+GENESIS_VERSION=$(python3 -c "import json; print(json.load(open('genesis.json')).get('version', ''))" 2>/dev/null || echo "")
+VERSION="${VERSION:-${GENESIS_VERSION:-0.0.0-dev}}"
+VERSION="${VERSION#v}"  # strip leading "v" if tag-like (e.g. v0.1.2 → 0.1.2)
 
 EXEC_SRC=".build/release/GenesisImaging"
 NCNN_SRC="Resources/bin/realesrgan-ncnn-vulkan"
 MODELS_SRC="Resources/bin/models"
 ICON_SRC="Resources/AppIcon.icns"
+BUILD_INFO_SRC="$ROOT/BUILD_INFO.json"
 
 if [ ! -x "$EXEC_SRC" ]; then
     echo "[package-app] ✗ $EXEC_SRC missing — run scripts/build.sh first" >&2
@@ -56,6 +62,13 @@ cp -R "$MODELS_SRC/." "$APP/Contents/Resources/bin/models/"
 if [ -f "$ICON_SRC" ]; then
     cp "$ICON_SRC" "$APP/Contents/Resources/AppIcon.icns"
 fi
+
+# BUILD_INFO.json — provenance (kulucka pattern). Generate if missing,
+# then bundle as Resources/BUILD_INFO.json (app reads at runtime).
+if [ ! -f "$BUILD_INFO_SRC" ]; then
+    "$ROOT/scripts/generate-build-info.sh"
+fi
+cp "$BUILD_INFO_SRC" "$APP/Contents/Resources/BUILD_INFO.json"
 
 # Info.plist
 cat > "$APP/Contents/Info.plist" << PLIST

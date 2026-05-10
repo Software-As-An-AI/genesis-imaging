@@ -35,6 +35,11 @@ jobs:
           swift build -c release
           ls -lh .build/release/
 
+      - name: Generate BUILD_INFO.json
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: ./scripts/generate-build-info.sh
+
       - name: Package macOS .app
         env:
           VERSION: ${{ github.ref_name }}
@@ -50,8 +55,9 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
           APP="build/GenesisImaging.app"
-          DMG="genesis-imaging-darwin-arm64.dmg"
-          ARTIFACT="genesis-imaging-darwin-arm64"
+          # Tag-versioned artifact names — different versions side-by-side on user disk.
+          DMG="genesis-imaging-${GITHUB_REF_NAME}-darwin-arm64.dmg"
+          ARTIFACT="genesis-imaging-${GITHUB_REF_NAME}-darwin-arm64"
 
           _create_dmg() {
             brew install create-dmg
@@ -137,12 +143,12 @@ jobs:
           security delete-keychain "$KEYCHAIN"
 
       - name: List release artifacts
-        run: ls -lh genesis-imaging-darwin-arm64.* 2>/dev/null || true
+        run: ls -lh genesis-imaging-${GITHUB_REF_NAME}-darwin-arm64.* 2>/dev/null || true
 
       - uses: actions/upload-artifact@v5
         with:
-          name: genesis-imaging-darwin-arm64
-          path: genesis-imaging-darwin-arm64.*
+          name: genesis-imaging-${{ github.ref_name }}-darwin-arm64
+          path: genesis-imaging-${{ github.ref_name }}-darwin-arm64.*
           retention-days: 7
 
   release:
@@ -155,7 +161,7 @@ jobs:
 
       - uses: actions/download-artifact@v5
         with:
-          name: genesis-imaging-darwin-arm64
+          name: genesis-imaging-${{ github.ref_name }}-darwin-arm64
           path: release/
 
       - name: Prepare release assets

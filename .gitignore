@@ -41,3 +41,8 @@ notarization-log.json
 .claude/settings.json
 .claude/skills
 .claude/commands
+
+# Build provenance — regenerated each build by scripts/generate-build-info.sh
+BUILD_INFO.json
+# ncnn version marker — produced by fetch-ncnn-binary.sh after install
+Resources/bin/.ncnn-version

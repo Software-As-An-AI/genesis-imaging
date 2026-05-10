@@ -200,10 +200,20 @@ public struct MainView: View {
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
             Spacer()
-            Text("Genesis Imaging — Faz 1")
+            Text("Genesis Imaging \(Self.appVersion) — Faz 1")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
+    }
+
+    /// Reads CFBundleShortVersionString from Info.plist at runtime.
+    /// Returns "(dev)" if no Info.plist (e.g. `swift run` without bundle).
+    private static var appVersion: String {
+        if let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+           !v.isEmpty {
+            return "v\(v)"
+        }
+        return "(dev)"
     }
 
     // MARK: - Helpers
