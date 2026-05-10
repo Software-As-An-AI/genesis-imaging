@@ -35,7 +35,8 @@ let package = Package(
         ),
         .testTarget(
             name: "NcnnEngineTests",
-            dependencies: ["NcnnEngine"]
+            dependencies: ["NcnnEngine"],
+            resources: [.process("Resources")]
         ),
     ]
 )
