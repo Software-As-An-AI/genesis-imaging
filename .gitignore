@@ -68,3 +68,5 @@ Resources/models/*.mlmodelc
 Resources/models/*.mlmodelc/
 Resources/models/.coreml-version
 .build/cache/coreml/
+tools/coreml-conversion/bench-fixtures/
+tools/coreml-conversion/bench-outputs/

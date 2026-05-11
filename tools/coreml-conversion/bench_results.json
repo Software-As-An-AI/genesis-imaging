@@ -1,0 +1,192 @@
+[
+  {
+    "fixture": {
+      "name": "small-gradient-256",
+      "width": 256,
+      "height": 256,
+      "content": "gradient"
+    },
+    "ncnn": {
+      "runs_s": [
+        1.143,
+        1.142,
+        1.14
+      ],
+      "min_s": 1.14,
+      "mean_s": 1.142,
+      "output_path": "/Users/okan.yucel/Desktop/genesis-imaging/tools/coreml-conversion/bench-outputs/small-gradient-256-ncnn.png",
+      "output_width": 1024,
+      "output_height": 1024,
+      "output_size_mb": 1.52
+    },
+    "coreml": {
+      "runs_s": [
+        0.61,
+        0.613,
+        0.609
+      ],
+      "min_s": 0.609,
+      "mean_s": 0.611,
+      "output_path": "/Users/okan.yucel/Desktop/genesis-imaging/tools/coreml-conversion/bench-outputs/small-gradient-256-coreml.png",
+      "output_width": 1024,
+      "output_height": 1024,
+      "output_size_mb": 1.0
+    },
+    "cross_engine_ssim": 0.9858311296526442,
+    "cross_engine_psnr": 33.67642776180703,
+    "coreml_self_ssim": 0.3427027085372361,
+    "coreml_self_psnr": 26.32298067233782
+  },
+  {
+    "fixture": {
+      "name": "medium-gradient-512",
+      "width": 512,
+      "height": 512,
+      "content": "gradient"
+    },
+    "ncnn": {
+      "runs_s": [
+        3.216,
+        3.185,
+        3.198
+      ],
+      "min_s": 3.185,
+      "mean_s": 3.2,
+      "output_path": "/Users/okan.yucel/Desktop/genesis-imaging/tools/coreml-conversion/bench-outputs/medium-gradient-512-ncnn.png",
+      "output_width": 2048,
+      "output_height": 2048,
+      "output_size_mb": 5.93
+    },
+    "coreml": {
+      "runs_s": [
+        0.612,
+        0.612,
+        0.611
+      ],
+      "min_s": 0.611,
+      "mean_s": 0.612,
+      "output_path": "/Users/okan.yucel/Desktop/genesis-imaging/tools/coreml-conversion/bench-outputs/medium-gradient-512-coreml.png",
+      "output_width": 2048,
+      "output_height": 2048,
+      "output_size_mb": 3.92
+    },
+    "cross_engine_ssim": 0.9932163902515274,
+    "cross_engine_psnr": 49.926810921100596,
+    "coreml_self_ssim": 0.32548733829490994,
+    "coreml_self_psnr": 26.563063991293735
+  },
+  {
+    "fixture": {
+      "name": "large-gradient-1024",
+      "width": 1024,
+      "height": 1024,
+      "content": "gradient"
+    },
+    "ncnn": {
+      "runs_s": [
+        11.731,
+        11.682,
+        11.944
+      ],
+      "min_s": 11.682,
+      "mean_s": 11.786,
+      "output_path": "/Users/okan.yucel/Desktop/genesis-imaging/tools/coreml-conversion/bench-outputs/large-gradient-1024-ncnn.png",
+      "output_width": 4096,
+      "output_height": 4096,
+      "output_size_mb": 23.63
+    },
+    "coreml": {
+      "runs_s": [
+        2.452,
+        2.444,
+        2.451
+      ],
+      "min_s": 2.444,
+      "mean_s": 2.449,
+      "output_path": "/Users/okan.yucel/Desktop/genesis-imaging/tools/coreml-conversion/bench-outputs/large-gradient-1024-coreml.png",
+      "output_width": 4096,
+      "output_height": 4096,
+      "output_size_mb": 15.58
+    },
+    "cross_engine_ssim": 0.9927570995112491,
+    "cross_engine_psnr": 49.866050276149,
+    "coreml_self_ssim": 0.32098283587388715,
+    "coreml_self_psnr": 26.533187467778117
+  },
+  {
+    "fixture": {
+      "name": "photo-sinusoidal-512",
+      "width": 512,
+      "height": 512,
+      "content": "sinusoidal-photo"
+    },
+    "ncnn": {
+      "runs_s": [
+        3.207,
+        3.198,
+        3.179
+      ],
+      "min_s": 3.179,
+      "mean_s": 3.195,
+      "output_path": "/Users/okan.yucel/Desktop/genesis-imaging/tools/coreml-conversion/bench-outputs/photo-sinusoidal-512-ncnn.png",
+      "output_width": 2048,
+      "output_height": 2048,
+      "output_size_mb": 6.45
+    },
+    "coreml": {
+      "runs_s": [
+        0.612,
+        0.612,
+        0.611
+      ],
+      "min_s": 0.611,
+      "mean_s": 0.612,
+      "output_path": "/Users/okan.yucel/Desktop/genesis-imaging/tools/coreml-conversion/bench-outputs/photo-sinusoidal-512-coreml.png",
+      "output_width": 2048,
+      "output_height": 2048,
+      "output_size_mb": 4.25
+    },
+    "cross_engine_ssim": 0.9893943012233862,
+    "cross_engine_psnr": 45.16484113985526,
+    "coreml_self_ssim": 0.9336258809038197,
+    "coreml_self_psnr": 34.315558235381346
+  },
+  {
+    "fixture": {
+      "name": "text-high-frequency-512",
+      "width": 512,
+      "height": 512,
+      "content": "high-freq-text"
+    },
+    "ncnn": {
+      "runs_s": [
+        3.149,
+        3.171,
+        3.199
+      ],
+      "min_s": 3.149,
+      "mean_s": 3.173,
+      "output_path": "/Users/okan.yucel/Desktop/genesis-imaging/tools/coreml-conversion/bench-outputs/text-high-frequency-512-ncnn.png",
+      "output_width": 2048,
+      "output_height": 2048,
+      "output_size_mb": 5.31
+    },
+    "coreml": {
+      "runs_s": [
+        0.612,
+        0.614,
+        0.612
+      ],
+      "min_s": 0.612,
+      "mean_s": 0.613,
+      "output_path": "/Users/okan.yucel/Desktop/genesis-imaging/tools/coreml-conversion/bench-outputs/text-high-frequency-512-coreml.png",
+      "output_width": 2048,
+      "output_height": 2048,
+      "output_size_mb": 3.58
+    },
+    "cross_engine_ssim": 0.991708496396774,
+    "cross_engine_psnr": 38.141105074797245,
+    "coreml_self_ssim": 0.9341847817671325,
+    "coreml_self_psnr": 25.64730035621412
+  }
+]
