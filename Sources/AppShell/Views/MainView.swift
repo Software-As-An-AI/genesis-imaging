@@ -200,7 +200,7 @@ public struct MainView: View {
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
             Spacer()
-            Text("Genesis Imaging \(Self.appVersion) — Faz 1")
+            Text("Genesis Imaging \(Self.appVersion) — Faz 1+2")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }

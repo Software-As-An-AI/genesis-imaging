@@ -15,5 +15,11 @@ struct ImageUpscaleApp: App {
                 }
         }
         .windowStyle(.titleBar)
+
+        // macOS Settings scene — ⌘, opens this; menubar "Genesis Imaging > Settings…"
+        // wires automatically when this scene is present.
+        Settings {
+            SettingsView()
+        }
     }
 }

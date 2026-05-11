@@ -31,6 +31,7 @@ VERSION="${VERSION#v}"  # strip leading "v" if tag-like (e.g. v0.1.2 → 0.1.2)
 EXEC_SRC=".build/release/GenesisImaging"
 NCNN_SRC="Resources/bin/realesrgan-ncnn-vulkan"
 MODELS_SRC="Resources/bin/models"
+COREML_MODELS_SRC="Resources/models"
 ICON_SRC="Resources/AppIcon.icns"
 BUILD_INFO_SRC="$ROOT/BUILD_INFO.json"
 
@@ -57,6 +58,20 @@ chmod +x "$APP/Contents/MacOS/GenesisImaging"
 cp "$NCNN_SRC" "$APP/Contents/Resources/bin/realesrgan-ncnn-vulkan"
 chmod +x "$APP/Contents/Resources/bin/realesrgan-ncnn-vulkan"
 cp -R "$MODELS_SRC/." "$APP/Contents/Resources/bin/models/"
+
+# Core ML compiled model (Faz 2). NOTICES.md is always copied if present;
+# .mlmodelc is conditional so Faz-1-only workflows still package successfully.
+mkdir -p "$APP/Contents/Resources/models"
+if [ -f "$COREML_MODELS_SRC/NOTICES.md" ]; then
+    cp "$COREML_MODELS_SRC/NOTICES.md" "$APP/Contents/Resources/models/NOTICES.md"
+fi
+if [ -d "$COREML_MODELS_SRC/RealESRGAN_x4plus.mlmodelc" ]; then
+    cp -R "$COREML_MODELS_SRC/RealESRGAN_x4plus.mlmodelc" \
+          "$APP/Contents/Resources/models/RealESRGAN_x4plus.mlmodelc"
+else
+    echo "[package-app] ! Core ML model missing — Faz 2 engine will fail at runtime."
+    echo "[package-app] !   Run scripts/fetch-coreml-model.sh to install."
+fi
 
 # Icon (optional in Faz 1 — workflow does not fail without it)
 if [ -f "$ICON_SRC" ]; then
