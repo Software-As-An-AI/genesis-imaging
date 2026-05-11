@@ -52,12 +52,13 @@ public struct MainView: View {
         return try EngineFactory.makeEngine(preference: pref)
     }
 
-    /// Resolved models directory for pre-flight model-presence checks. Reads
-    /// the bundle resource directory when running from a packaged `.app`; falls
-    /// back to `nil` (skip check) in `swift run` dev mode where the resource
-    /// directory may not exist yet.
+    /// Resolved models directory for pre-flight model-presence checks. Delegates
+    /// to `BinaryLocator.defaultModelsDirectory()` — the canonical resolver also
+    /// used by `NcnnEngine` for single-file flow (Bundle's `Resources/bin/models`
+    /// in packaged `.app`, repo `Resources/bin/models` under `swift run`). Returns
+    /// `nil` if neither location resolves (preflight then soft-passes the check).
     private static var resolvedModelsDirectory: URL? {
-        Bundle.main.resourceURL?.appendingPathComponent("Models")
+        try? BinaryLocator.defaultModelsDirectory()
     }
 
     /// Pre-Wave-2 single-file UX, preserved verbatim. Reached when the queue
