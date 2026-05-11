@@ -225,7 +225,7 @@ jobs:
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/portal_deploy -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes"
 
           git clone --depth 1 \
-            git@github.com:okanyucel2/softwareasan-portal.git \
+            git@github.com:Software-As-An-AI/softwareasan-portal.git \
             /tmp/portal
           mkdir -p /tmp/portal/public/genesis-imaging
           cp appcast.xml /tmp/portal/public/genesis-imaging/appcast.xml
