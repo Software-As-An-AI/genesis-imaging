@@ -12,6 +12,13 @@ let package = Package(
         .library(name: "CoreMLEngine", targets: ["CoreMLEngine"]),
         .executable(name: "GenesisImaging", targets: ["AppShell"]),
     ],
+    dependencies: [
+        // Sparkle 2.x — macOS auto-update framework. Hardened Runtime + EdDSA
+        // baked in; no extra entitlements needed for sandboxed apps (we don't
+        // sandbox). Cross-edition reuse seed: future Mac native edition'lar
+        // aynı SPM dep'i kullanır.
+        .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.6.4"),
+    ],
     targets: [
         .target(
             name: "ImagingCore",
@@ -35,7 +42,12 @@ let package = Package(
         ),
         .executableTarget(
             name: "AppShell",
-            dependencies: ["ImagingCore", "NcnnEngine", "CoreMLEngine"]
+            dependencies: [
+                "ImagingCore",
+                "NcnnEngine",
+                "CoreMLEngine",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ]
         ),
         .testTarget(
             name: "ImagingCoreTests",

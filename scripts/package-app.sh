@@ -85,6 +85,22 @@ if [ ! -f "$BUILD_INFO_SRC" ]; then
 fi
 cp "$BUILD_INFO_SRC" "$APP/Contents/Resources/BUILD_INFO.json"
 
+# Sparkle keys — present only when SU_PUBLIC_KEY env var is set (CI sets it
+# from the org-level SPARKLE_ED25519_PRIVATE_KEY pair's public component).
+# Local dev builds without the key omit Sparkle config so the app falls back
+# to "Sparkle not configured" silently rather than failing on a malformed plist.
+SPARKLE_PLIST_BLOCK=""
+if [ -n "${SU_PUBLIC_KEY:-}" ]; then
+    SPARKLE_PLIST_BLOCK=$(cat << SPARKLE_EOF
+  <key>SUFeedURL</key><string>https://apps.softwareasan.ai/genesis-imaging/appcast.xml</string>
+  <key>SUPublicEDKey</key><string>${SU_PUBLIC_KEY}</string>
+  <key>SUEnableAutomaticChecks</key><true/>
+  <key>SUScheduledCheckInterval</key><integer>86400</integer>
+  <key>SUAllowsAutomaticUpdates</key><true/>
+SPARKLE_EOF
+)
+fi
+
 # Info.plist
 cat > "$APP/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -103,6 +119,7 @@ cat > "$APP/Contents/Info.plist" << PLIST
   <key>LSApplicationCategoryType</key><string>public.app-category.graphics-design</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSHumanReadableCopyright</key><string>© 2026 Okan Yucel · MIT License</string>
+${SPARKLE_PLIST_BLOCK}
 </dict>
 </plist>
 PLIST

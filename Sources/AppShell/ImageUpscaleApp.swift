@@ -1,8 +1,22 @@
 import SwiftUI
 import ImagingCore
+import Sparkle
 
 @main
 struct ImageUpscaleApp: App {
+    // Sparkle 2.x updater controller. `startingUpdater: true` arms the
+    // background scheduler — the app checks SUFeedURL on the
+    // `SUScheduledCheckInterval` cadence (24h) baked into Info.plist.
+    private let updaterController: SPUStandardUpdaterController
+
+    init() {
+        updaterController = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
+    }
+
     var body: some Scene {
         WindowGroup("Genesis Imaging") {
             MainView()
@@ -15,6 +29,13 @@ struct ImageUpscaleApp: App {
                 }
         }
         .windowStyle(.titleBar)
+        .commands {
+            // Menubar: "Genesis Imaging → Güncellemeleri Kontrol Et…" appears
+            // right after the "About Genesis Imaging" item (.appInfo placement).
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesView(updater: updaterController.updater)
+            }
+        }
 
         // macOS Settings scene — ⌘, opens this; menubar "Genesis Imaging > Settings…"
         // wires automatically when this scene is present.

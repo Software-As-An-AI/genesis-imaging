@@ -52,6 +52,9 @@ jobs:
       - name: Package macOS .app
         env:
           VERSION: ${{ github.ref_name }}
+          # Sparkle public key — embedded in Info.plist via package-app.sh.
+          # When unset, package-app.sh omits Sparkle config (silent fallback).
+          SU_PUBLIC_KEY: ${{ secrets.SU_PUBLIC_KEY }}
         run: ./scripts/package-app.sh
 
       - name: Sign, Notarize & Package DMG
@@ -150,6 +153,53 @@ jobs:
           ls -lh ${ARTIFACT}.* 2>/dev/null || true
 
           security delete-keychain "$KEYCHAIN"
+
+      - name: Generate + sign appcast.xml
+        if: ${{ env.HAS_SPARKLE_KEY == 'true' }}
+        env:
+          HAS_SPARKLE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY != '' }}
+          SPARKLE_ED25519_PRIVATE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY }}
+          VERSION_NO_V: ${{ github.ref_name }}
+        run: |
+          # Strip "v" prefix from tag for version field
+          VERSION="${VERSION_NO_V#v}"
+          DMG="genesis-imaging-${GITHUB_REF_NAME}-darwin-arm64.dmg"
+          if [ ! -f "$DMG" ]; then
+            echo "::warning::DMG not found ($DMG) — skipping appcast generation"
+            exit 0
+          fi
+          ./scripts/generate-appcast.sh "$DMG" "$VERSION" > appcast.xml
+          xmllint --noout appcast.xml
+          echo "✅ appcast.xml generated + xmllint valid ($(wc -l < appcast.xml) lines)"
+
+      - name: Publish appcast.xml to softwareasan-portal
+        if: ${{ env.HAS_PORTAL_TOKEN == 'true' }}
+        env:
+          HAS_PORTAL_TOKEN: ${{ secrets.PORTAL_REPO_TOKEN != '' }}
+          PORTAL_REPO_TOKEN: ${{ secrets.PORTAL_REPO_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          if [ ! -f appcast.xml ]; then
+            echo "::warning::appcast.xml missing — skipping cross-repo publish"
+            exit 0
+          fi
+          # Clone with PAT, copy appcast.xml, commit + push.
+          git clone --depth 1 \
+            "https://x-access-token:${PORTAL_REPO_TOKEN}@github.com/okanyucel2/softwareasan-portal.git" \
+            /tmp/portal
+          mkdir -p /tmp/portal/public/genesis-imaging
+          cp appcast.xml /tmp/portal/public/genesis-imaging/appcast.xml
+          cd /tmp/portal
+          git config user.email "release-bot@genesis.local"
+          git config user.name "genesis-imaging-release-bot"
+          if git diff --quiet public/genesis-imaging/appcast.xml; then
+            echo "appcast.xml unchanged — nothing to commit"
+            exit 0
+          fi
+          git add public/genesis-imaging/appcast.xml
+          git commit -m "chore(appcast): genesis-imaging ${VERSION} (auto-generated, ed25519-signed)"
+          git push origin main
+          echo "✅ appcast.xml published to softwareasan-portal main"
 
       - name: List release artifacts
         run: ls -lh genesis-imaging-${GITHUB_REF_NAME}-darwin-arm64.* 2>/dev/null || true
