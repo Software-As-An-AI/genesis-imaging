@@ -173,19 +173,27 @@ jobs:
           echo "✅ appcast.xml generated + xmllint valid ($(wc -l < appcast.xml) lines)"
 
       - name: Publish appcast.xml to softwareasan-portal
-        if: ${{ env.HAS_PORTAL_TOKEN == 'true' }}
+        if: ${{ env.HAS_PORTAL_KEY == 'true' }}
         env:
-          HAS_PORTAL_TOKEN: ${{ secrets.PORTAL_REPO_TOKEN != '' }}
-          PORTAL_REPO_TOKEN: ${{ secrets.PORTAL_REPO_TOKEN }}
+          HAS_PORTAL_KEY: ${{ secrets.PORTAL_DEPLOY_KEY != '' }}
+          PORTAL_DEPLOY_KEY: ${{ secrets.PORTAL_DEPLOY_KEY }}
           VERSION: ${{ github.ref_name }}
         run: |
           if [ ! -f appcast.xml ]; then
             echo "::warning::appcast.xml missing — skipping cross-repo publish"
             exit 0
           fi
-          # Clone with PAT, copy appcast.xml, commit + push.
+          # SSH deploy key (repo-scoped write access to softwareasan-portal).
+          # Cleaner than a user-scoped PAT — only this one repo can be written.
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "$PORTAL_DEPLOY_KEY" > ~/.ssh/portal_deploy
+          chmod 600 ~/.ssh/portal_deploy
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/portal_deploy -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes"
+
           git clone --depth 1 \
-            "https://x-access-token:${PORTAL_REPO_TOKEN}@github.com/okanyucel2/softwareasan-portal.git" \
+            git@github.com:okanyucel2/softwareasan-portal.git \
             /tmp/portal
           mkdir -p /tmp/portal/public/genesis-imaging
           cp appcast.xml /tmp/portal/public/genesis-imaging/appcast.xml
@@ -194,11 +202,13 @@ jobs:
           git config user.name "genesis-imaging-release-bot"
           if git diff --quiet public/genesis-imaging/appcast.xml; then
             echo "appcast.xml unchanged — nothing to commit"
+            rm -f ~/.ssh/portal_deploy
             exit 0
           fi
           git add public/genesis-imaging/appcast.xml
           git commit -m "chore(appcast): genesis-imaging ${VERSION} (auto-generated, ed25519-signed)"
           git push origin main
+          rm -f ~/.ssh/portal_deploy
           echo "✅ appcast.xml published to softwareasan-portal main"
 
       - name: List release artifacts
