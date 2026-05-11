@@ -5,15 +5,40 @@ import ImagingCore
 
 /// Faz 1 main surface: drop zone + controls + progress + result.
 /// Bound to `UpscaleViewModel` (single source of truth).
+///
+/// Wave 2 (batch upscale, Faz 3): a `BatchQueue` is owned here and consulted
+/// at the top of `body` — when 2+ files arrive (multi-select import or
+/// multi-URL drop), `BatchQueueView` replaces the single-file UX. The
+/// single-file path stays byte-for-byte preserved when the queue is empty.
 @MainActor
 public struct MainView: View {
     @State private var viewModel = UpscaleViewModel()
     @State private var showFileImporter = false
     @State private var isDropTargeted = false
 
+    /// Owned for the lifetime of the window. Seeded with the same defaults
+    /// the single-file picker offers so the batch UI feels continuous.
+    @StateObject private var queue = BatchQueue(
+        defaultModel: "realesrgan-x4plus",
+        defaultScale: 4
+    )
+
     public init() {}
 
     public var body: some View {
+        Group {
+            if queue.items.count >= 2 {
+                BatchQueueView(queue: queue)
+            } else {
+                singleFileBody
+            }
+        }
+    }
+
+    /// Pre-Wave-2 single-file UX, preserved verbatim. Reached when the queue
+    /// is empty or holds exactly one item (single-file flow drives via
+    /// `viewModel`, not the queue — keeps existing tests + UX contract).
+    private var singleFileBody: some View {
         VStack(spacing: 16) {
             header
             dropZone
@@ -29,10 +54,10 @@ public struct MainView: View {
         .fileImporter(
             isPresented: $showFileImporter,
             allowedContentTypes: [.image],
-            allowsMultipleSelection: false
+            allowsMultipleSelection: true
         ) { result in
-            if case let .success(urls) = result, let first = urls.first {
-                viewModel.selectInput(first)
+            if case let .success(urls) = result {
+                handleSelected(urls: urls)
             }
         }
     }
@@ -228,15 +253,50 @@ public struct MainView: View {
         ]
     }
 
+    /// Multi-URL drop handler. Loads every dropped URL asynchronously and,
+    /// once they've all resolved, dispatches the batch:
+    /// - 1 URL → single-file viewModel path (unchanged).
+    /// - 2+ URLs → seed the `BatchQueue` and switch to `BatchQueueView`.
+    ///
+    /// We accumulate URLs across all providers because `NSItemProvider`'s
+    /// `loadObject` is async; dispatching per-provider would race the
+    /// `count >= 2` check in `body`.
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
-        guard let provider = providers.first else { return false }
-        _ = provider.loadObject(ofClass: URL.self) { url, _ in
-            guard let url = url else { return }
+        guard !providers.isEmpty else { return false }
+        let group = DispatchGroup()
+        var collected: [URL] = []
+        let lock = NSLock()
+
+        for provider in providers {
+            group.enter()
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                if let url = url {
+                    lock.lock()
+                    collected.append(url)
+                    lock.unlock()
+                }
+                group.leave()
+            }
+        }
+
+        group.notify(queue: .main) {
             Task { @MainActor in
-                viewModel.selectInput(url)
+                handleSelected(urls: collected)
             }
         }
         return true
+    }
+
+    /// Route a freshly-selected URL set to the right surface. Single URL
+    /// preserves single-file UX; 2+ populates the batch queue (which
+    /// triggers `BatchQueueView` via `body`'s conditional).
+    private func handleSelected(urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        if urls.count == 1, let first = urls.first {
+            viewModel.selectInput(first)
+        } else {
+            queue.add(urls: urls)
+        }
     }
 
     private func saveAs(sourceURL: URL) {
