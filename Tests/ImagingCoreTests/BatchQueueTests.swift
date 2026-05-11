@@ -1,4 +1,7 @@
 import XCTest
+import ImageIO
+import CoreGraphics
+import UniformTypeIdentifiers
 @testable import ImagingCore
 
 @MainActor
@@ -15,6 +18,40 @@ final class BatchQueueTests: XCTestCase {
 
     private func url(_ name: String) -> URL {
         URL(fileURLWithPath: "/tmp/genesis-imaging-batchtest/\(name)")
+    }
+
+    /// Write a small valid PNG to a unique temp location. Caller is
+    /// responsible for cleanup. Shared with Wave 3 tests below.
+    static func writeValidPNG(name: String, width: Int = 4, height: Int = 4) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("batchqueue-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent(name)
+        let cs = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: cs,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            throw NSError(domain: "BatchQueueTests", code: 1)
+        }
+        ctx.setFillColor(red: 0.3, green: 0.5, blue: 0.7, alpha: 1.0)
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        guard let cgImage = ctx.makeImage(),
+              let dest = CGImageDestinationCreateWithURL(
+                url as CFURL, UTType.png.identifier as CFString, 1, nil
+              ) else {
+            throw NSError(domain: "BatchQueueTests", code: 2)
+        }
+        CGImageDestinationAddImage(dest, cgImage, nil)
+        guard CGImageDestinationFinalize(dest) else {
+            throw NSError(domain: "BatchQueueTests", code: 3)
+        }
+        return url
     }
 
     // MARK: - add / remove
@@ -115,16 +152,21 @@ final class BatchQueueTests: XCTestCase {
 
     // MARK: - Phase
 
-    func test_phase_transition_draft_to_processing() async {
+    func test_phase_transition_draft_to_processing() async throws {
         let q = makeQueue()
-        q.add(urls: [url("a.png")])
+        // Real fixture — preflight is now wired to `PreflightValidator`, so
+        // a non-existent path would surface `.fileMissing` and block ready.
+        let fixture = try BatchQueueTests.writeValidPNG(name: "phase-ok.png")
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        q.add(urls: [fixture])
         XCTAssertEqual(q.phase, .draft)
 
-        // No preflight issues injected → pass to ready, then start → processing.
         let issues = await q.preflight()
         XCTAssertEqual(issues.count, 0)
         XCTAssertEqual(q.phase, .ready)
 
+        // Wave 1 compatibility: parameterless start() flips phase without
+        // running the engine loop.
         await q.start()
         XCTAssertEqual(q.phase, .processing)
         XCTAssertNotNil(q.startTime)
@@ -132,11 +174,13 @@ final class BatchQueueTests: XCTestCase {
 
     func test_phase_falls_back_to_draft_when_preflight_has_issues() async {
         let q = makeQueue()
-        q.add(urls: [url("a.png")])
-        q.preflightIssues = [.fileMissing(url("a.png"))]
+        // Path that does not exist on disk → `PreflightValidator` surfaces
+        // `.fileMissing`. No injection needed.
+        q.add(urls: [url("nonexistent.png")])
 
         let issues = await q.preflight()
-        XCTAssertEqual(issues.count, 1)
+        XCTAssertGreaterThanOrEqual(issues.count, 1,
+            "Missing file should produce at least one issue")
         XCTAssertEqual(q.phase, .draft, "Issues block → user must fix before start")
     }
 

@@ -1,4 +1,7 @@
 import Foundation
+import ImageIO
+import CoreGraphics
+import UniformTypeIdentifiers
 
 // MARK: - Queue Item
 
@@ -85,9 +88,10 @@ public enum PreflightIssue: Sendable, Equatable {
 
 /// Coordinates a sequential multi-file upscale run.
 ///
-/// Engine-agnostic: knows nothing about NCNN vs CoreML. Wave 2/3 will wire
-/// `preflight()` to `PreflightValidator` and `start()` to `OutputWriter` +
-/// the engine factory in `AppShell`.
+/// Engine-agnostic: knows nothing about NCNN vs CoreML. The Wave 3 engine
+/// wiring injects an `engineProvider` closure at `start(...)` time so this
+/// module never imports `NcnnEngine` / `CoreMLEngine` (those depend on
+/// `ImagingCore`, not the other way around).
 ///
 /// State machine:
 /// ```
@@ -135,15 +139,36 @@ public final class BatchQueue: ObservableObject {
 
     /// Append `urls` as `pending` items. Same `sourceURL` is dropped (defensive
     /// dedupe — same file dropped twice yields one item, not two).
+    ///
+    /// Wave 3: also fires a background task to populate `thumbnailData` for
+    /// each newly-added item. UI layer can render the placeholder glyph
+    /// during the brief window before thumbnails resolve.
     public func add(urls: [URL]) {
         guard !urls.isEmpty else { return }
         let existing = Set(items.map { $0.sourceURL.standardizedFileURL })
         var seenInBatch: Set<URL> = []
+        var newlyAddedIDs: [UUID] = []
         for url in urls {
             let key = url.standardizedFileURL
             if existing.contains(key) || seenInBatch.contains(key) { continue }
             seenInBatch.insert(key)
-            items.append(QueueItem(sourceURL: url))
+            let item = QueueItem(sourceURL: url)
+            items.append(item)
+            newlyAddedIDs.append(item.id)
+        }
+        // Fire background thumbnail generation. Detached + Sendable so we
+        // don't block `add(urls:)` on disk I/O.
+        let urlsByID: [(UUID, URL)] = newlyAddedIDs.compactMap { id in
+            guard let item = self.items.first(where: { $0.id == id }) else { return nil }
+            return (id, item.sourceURL)
+        }
+        if urlsByID.isEmpty { return }
+        Task.detached(priority: .utility) { [weak self] in
+            for (id, url) in urlsByID {
+                let data = Self.makeThumbnailData(for: url)
+                guard let data = data else { continue }
+                await self?.applyThumbnail(id: id, data: data)
+            }
         }
     }
 
@@ -166,6 +191,18 @@ public final class BatchQueue: ObservableObject {
         cancelRequested = true
     }
 
+    /// Reset queue to a pristine draft state so a fresh run can start.
+    /// Used by the end-summary "Listeyi temizle" button + any external caller
+    /// that wants to recycle the same queue object.
+    public func reset() {
+        items.removeAll()
+        preflightIssues.removeAll()
+        cancelRequested = false
+        startTime = nil
+        averageDuration = nil
+        phase = .draft
+    }
+
     // MARK: - Computed
 
     public var completedCount: Int {
@@ -185,28 +222,214 @@ public final class BatchQueue: ObservableObject {
         return TimeInterval(remaining) * avg
     }
 
-    // MARK: - Lifecycle (Wave 2/3 wiring)
+    // MARK: - Lifecycle (Wave 3 wiring)
 
-    /// Run pre-flight validation against current `items`. Wave 1: stub returns
-    /// `preflightIssues` as-is so tests can drive the state machine directly.
-    /// Wave 2 will wire `PreflightValidator.validate(...)`.
-    public func preflight() async -> [PreflightIssue] {
+    /// Run pre-flight validation against current `items`. Wave 3: wired to
+    /// `PreflightValidator.validate(...)`.
+    ///
+    /// - Parameter modelsDirectory: Where to look for model files. Pass
+    ///   `nil` to skip the model-presence check (engine factory will surface
+    ///   missing-model errors at start time).
+    public func preflight(modelsDirectory: URL? = nil) async -> [PreflightIssue] {
         phase = .validating
-        // Wave 2 wiring point — for now we preserve any pre-populated issues
-        // (tests can inject directly via `preflightIssues`).
-        let issues = preflightIssues
+        let validator = PreflightValidator()
+        let issues = await validator.validate(
+            items: items,
+            outputDir: batchOutputOverride,
+            defaultModel: defaultModel,
+            defaultScale: defaultScale,
+            modelsDirectory: modelsDirectory
+        )
+        preflightIssues = issues
         phase = issues.isEmpty ? .ready : .draft
         return issues
     }
 
-    /// Begin sequential processing. Wave 1: stub flips phase to `.processing`
-    /// so transition tests can run; Wave 3 will iterate items through the
-    /// engine + `OutputWriter`.
+    /// Begin sequential processing using `engineProvider` to construct one
+    /// engine per item (provider may cache + return the same engine across
+    /// calls — `BatchQueue` doesn't care).
+    ///
+    /// Soft cancel contract: when `cancelRequested == true`, the queue stops
+    /// dispatching NEW items, but the currently-processing engine call is
+    /// allowed to finish.
+    ///
+    /// Failure policy: if any single item throws, mark it `.failed`, record
+    /// `errorMessage`, and continue to the next item. The queue completes
+    /// `.completed` (or `.cancelled` if soft-cancel was requested) even when
+    /// individual items failed — terminal counts live in `endSummary`.
+    ///
+    /// - Parameters:
+    ///   - engineProvider: Async closure that produces an `UpscaleEngine`.
+    ///     Called once before the loop starts. If provider throws, the run
+    ///     terminates with `.completed` (no items processed) and surfaces the
+    ///     error as `errorMessage` on the first item.
+    public func start(engineProvider: @Sendable () async throws -> any UpscaleEngine) async {
+        guard phase == .ready || phase == .draft else { return }
+        phase = .processing
+        startTime = Date()
+        // Note: cancelRequested is NOT cleared here — a soft-cancel that
+        // arrived between preflight + start should still take effect on the
+        // very first iteration of the item loop. Use `reset()` to clear.
+
+        // Obtain engine. If construction fails, surface as item-level error
+        // on the first pending item so the UI has somewhere to display it.
+        let engine: any UpscaleEngine
+        do {
+            engine = try await engineProvider()
+        } catch {
+            let message = "Engine init failed: \(error.localizedDescription)"
+            if let firstIdx = items.firstIndex(where: { $0.state == .pending }) {
+                items[firstIdx].state = .failed
+                items[firstIdx].errorMessage = message
+            }
+            phase = .completed
+            return
+        }
+
+        // Sequential item loop.
+        for idx in items.indices {
+            // Soft-cancel check between items.
+            if cancelRequested { break }
+            // Skip non-pending items (re-run scenarios may have residue).
+            if items[idx].state != .pending { continue }
+
+            await processItem(at: idx, engine: engine)
+        }
+
+        phase = cancelRequested ? .cancelled : .completed
+    }
+
+    /// Backwards-compatible parameterless start used by Wave 1/2 tests that
+    /// only need phase transitions. Equivalent to `start { fatalError() }`
+    /// without ever calling the provider (no items to process).
     public func start() async {
         guard phase == .ready || phase == .draft else { return }
         phase = .processing
         startTime = Date()
-        // Wave 3 wiring point.
+        // No engine wiring — Wave 1 phase-transition test compatibility only.
+    }
+
+    // MARK: - Engine processing
+
+    /// Process a single item via `engine`. Engine writes output to a `.tmp`
+    /// neighbour of the resolved final URL; on success the tmp is moved
+    /// atomically into place. On any throw, item is marked `.failed` with
+    /// `errorMessage` set.
+    private func processItem(at idx: Int, engine: any UpscaleEngine) async {
+        items[idx].state = .processing
+        items[idx].progress = 0
+        let item = items[idx]
+
+        let model = item.effectiveModel(batchDefault: defaultModel)
+        let scale = item.effectiveScale(batchDefault: defaultScale)
+        let finalURL = OutputWriter.resolveOutputURL(
+            source: item.sourceURL,
+            scale: scale,
+            batchOverride: batchOutputOverride
+        )
+        let tmpURL = finalURL.deletingLastPathComponent()
+            .appendingPathComponent("\(finalURL.lastPathComponent).tmp.\(UUID().uuidString)")
+
+        let request = UpscaleRequest(
+            inputURL: item.sourceURL,
+            outputURL: tmpURL,
+            modelName: model,
+            scale: scale
+        )
+
+        let runStart = Date()
+        do {
+            try await runEngineStream(engine: engine, request: request, itemIndex: idx)
+
+            // Engine wrote bytes to tmpURL — promote atomically.
+            try Self.atomicMove(from: tmpURL, to: finalURL)
+
+            let duration = Date().timeIntervalSince(runStart)
+            items[idx].state = .done
+            items[idx].progress = 1.0
+            items[idx].duration = duration
+            items[idx].outputURL = finalURL
+            items[idx].errorMessage = nil
+            recordCompletion(duration: duration)
+        } catch {
+            // Clean up any stray tmp file before recording failure.
+            try? FileManager.default.removeItem(at: tmpURL)
+            items[idx].state = .failed
+            items[idx].errorMessage = describe(error)
+        }
+    }
+
+    /// Consume the engine's progress stream + drive `item.progress` updates.
+    /// Throws on engine failure; returns normally on `.completed`.
+    private func runEngineStream(
+        engine: any UpscaleEngine,
+        request: UpscaleRequest,
+        itemIndex idx: Int
+    ) async throws {
+        let stream = engine.upscale(request: request)
+        var sawCompleted = false
+        for try await event in stream {
+            switch event {
+            case .started:
+                items[idx].progress = 0
+            case .tile(let current, let total):
+                items[idx].progress = total > 0
+                    ? Double(current) / Double(total)
+                    : 0
+            case .percentage(let pct):
+                items[idx].progress = max(0, min(1, pct / 100.0))
+            case .completed:
+                items[idx].progress = 1.0
+                sawCompleted = true
+            case .failed(let err):
+                throw err
+            }
+        }
+        if !sawCompleted {
+            // Engine ended stream without explicit completion + without throw —
+            // treat as failure so we don't silently mark the item .done.
+            throw UpscaleError.engineFailure(
+                exitCode: -1,
+                stderr: "Engine stream ended without completion event"
+            )
+        }
+    }
+
+    /// Atomic same-volume move (rename(2) on macOS). Both ends must share the
+    /// same parent directory — `processItem` constructs `tmpURL` as a
+    /// neighbour of `finalURL` so this is always true.
+    private static func atomicMove(from src: URL, to dst: URL) throws {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: dst.path) {
+            try? fm.removeItem(at: dst)
+        }
+        try fm.moveItem(at: src, to: dst)
+    }
+
+    private func describe(_ error: Error) -> String {
+        if let upscaleErr = error as? UpscaleError {
+            switch upscaleErr {
+            case .binaryNotFound(let path):
+                return "Engine binary not found: \(path)"
+            case .modelNotFound(let name):
+                return "Model not found: \(name)"
+            case .unsupportedFormat(let mediaType):
+                return "Unsupported format: \(mediaType)"
+            case .engineFailure(let exitCode, let stderr):
+                let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+                let snippet = trimmed.count > 200 ? String(trimmed.prefix(200)) + "…" : trimmed
+                return snippet.isEmpty
+                    ? "Engine failed (exit \(exitCode))"
+                    : "Engine failed (exit \(exitCode)): \(snippet)"
+            case .cancelled:
+                return "Cancelled"
+            case .ioError(let message):
+                return "I/O error: \(message)"
+            case .notImplemented(let reason):
+                return "Not implemented: \(reason)"
+            }
+        }
+        return error.localizedDescription
     }
 
     // MARK: - Internal hooks (tests + Wave 3)
@@ -232,5 +455,39 @@ public final class BatchQueue: ObservableObject {
     /// from the (Wave 2/3) preflight + engine wiring.
     func setPhaseForTesting(_ newPhase: Phase) {
         phase = newPhase
+    }
+
+    /// Apply a freshly-decoded thumbnail blob to the item with `id`. No-op if
+    /// the item was removed before the background task finished.
+    fileprivate func applyThumbnail(id: UUID, data: Data) {
+        guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
+        items[idx].thumbnailData = data
+    }
+
+    // MARK: - Thumbnail (background)
+
+    /// Decode a small thumbnail blob from `url` using ImageIO. Returns `nil`
+    /// on any failure (unreadable / non-image / decode error) — UI falls back
+    /// to the placeholder glyph.
+    nonisolated static func makeThumbnailData(for url: URL) -> Data? {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 128,
+        ]
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        else { return nil }
+
+        let mutableData = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            mutableData,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else { return nil }
+        CGImageDestinationAddImage(destination, cgImage, nil)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return mutableData as Data
     }
 }

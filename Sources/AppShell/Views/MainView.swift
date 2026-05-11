@@ -2,6 +2,8 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 import ImagingCore
+import NcnnEngine
+import CoreMLEngine
 
 /// Faz 1 main surface: drop zone + controls + progress + result.
 /// Bound to `UpscaleViewModel` (single source of truth).
@@ -28,11 +30,34 @@ public struct MainView: View {
     public var body: some View {
         Group {
             if queue.items.count >= 2 {
-                BatchQueueView(queue: queue)
+                BatchQueueView(
+                    queue: queue,
+                    engineProvider: Self.batchEngineProvider,
+                    modelsDirectory: Self.resolvedModelsDirectory
+                )
             } else {
                 singleFileBody
             }
         }
+    }
+
+    /// Engine provider closure handed to `BatchQueueView`. Resolves the user's
+    /// engine preference (Settings → Auto / Core ML / ncnn-vulkan) the same
+    /// way `UpscaleViewModel.runStream` does for the single-file flow.
+    @Sendable
+    private static func batchEngineProvider() async throws -> any UpscaleEngine {
+        let pref = await MainActor.run {
+            EnginePreference.from(rawValue: SettingsStore.shared.enginePreference)
+        }
+        return try EngineFactory.makeEngine(preference: pref)
+    }
+
+    /// Resolved models directory for pre-flight model-presence checks. Reads
+    /// the bundle resource directory when running from a packaged `.app`; falls
+    /// back to `nil` (skip check) in `swift run` dev mode where the resource
+    /// directory may not exist yet.
+    private static var resolvedModelsDirectory: URL? {
+        Bundle.main.resourceURL?.appendingPathComponent("Models")
     }
 
     /// Pre-Wave-2 single-file UX, preserved verbatim. Reached when the queue

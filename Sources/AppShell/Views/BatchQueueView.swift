@@ -24,12 +24,28 @@ import ImagingCore
 public struct BatchQueueView: View {
     @ObservedObject var queue: BatchQueue
 
+    /// Async engine provider — injected by the host (`MainView`) so this view
+    /// stays decoupled from `EngineFactory`. Called once at start time;
+    /// `BatchQueue` reuses the returned engine across all items.
+    let engineProvider: @Sendable () async throws -> any UpscaleEngine
+
+    /// Resolved models directory for pre-flight model-presence checks.
+    /// `nil` skips the check (engine init will surface missing-model errors
+    /// at start time as a per-item failure).
+    let modelsDirectory: URL?
+
     @State private var openOverridePopoverID: UUID?
     @State private var showFileImporter: Bool = false
     @State private var showBatchOutputPicker: Bool = false
 
-    public init(queue: BatchQueue) {
+    public init(
+        queue: BatchQueue,
+        engineProvider: @escaping @Sendable () async throws -> any UpscaleEngine,
+        modelsDirectory: URL? = nil
+    ) {
         self.queue = queue
+        self.engineProvider = engineProvider
+        self.modelsDirectory = modelsDirectory
     }
 
     /// Model picker source. Matches the single-file `MainView` list. Wave 3
@@ -144,11 +160,15 @@ public struct BatchQueueView: View {
         }
     }
 
-    /// Primary CTA — disabled until pre-flight passes (Wave 3 wiring point).
-    /// Wave 2 keeps the button compile-clean with a TODO no-op.
+    /// Primary CTA — runs preflight, then (if no issues) hands the queue to
+    /// the engine provider. Soft cancel happens via the footer's "İptal".
     private var startButton: some View {
         Button {
-            // TODO(Wave 3): await queue.preflight() then queue.start()
+            Task {
+                let issues = await queue.preflight(modelsDirectory: modelsDirectory)
+                guard issues.isEmpty else { return }
+                await queue.start(engineProvider: engineProvider)
+            }
         } label: {
             Label("Başlat", systemImage: "play.fill")
         }
@@ -289,13 +309,7 @@ public struct BatchQueueView: View {
                 .disabled(queue.cancelRequested)
             } else if queue.phase == .completed || queue.phase == .cancelled {
                 Button {
-                    // Wave 3 hook: reset queue back to draft for a new run.
-                    // Wave 2 surfaces only the affordance.
-                    queue.items.removeAll()
-                    queue.preflightIssues.removeAll()
-                    queue.cancelRequested = false
-                    queue.startTime = nil
-                    queue.averageDuration = nil
+                    queue.reset()
                 } label: {
                     Label("Listeyi temizle", systemImage: "trash")
                 }
