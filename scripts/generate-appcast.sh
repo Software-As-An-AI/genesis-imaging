@@ -66,11 +66,20 @@ if [ "$PRIV_KEY_SIZE" -lt 40 ] || [ "$PRIV_KEY_SIZE" -gt 60 ]; then
 fi
 
 # ── Sign the DMG ────────────────────────────────────────────────────────────
-# sign_update -p prints "sparkle:edSignature=\"...\" length=\"...\""
-SIGNATURE_INFO=$("$SIGN_UPDATE" --ed-key-file "$PRIV_KEY_FILE" -p "$DMG_PATH")
+# sign_update without -p emits the full XML attribute string for the
+# <enclosure> element: `sparkle:edSignature="..." length="..."`.
+# Using -p prints only the signature value (no attribute name/quoting),
+# which produced invalid XML when interpolated into the template.
+SIGNATURE_INFO=$("$SIGN_UPDATE" --ed-key-file "$PRIV_KEY_FILE" "$DMG_PATH")
 
 if [ -z "$SIGNATURE_INFO" ]; then
     echo "[generate-appcast] ✗ sign_update produced no output" >&2
+    exit 1
+fi
+# Verify the expected attribute keywords are in the signature output.
+if ! echo "$SIGNATURE_INFO" | grep -q 'sparkle:edSignature='; then
+    echo "[generate-appcast] ✗ sign_update output missing sparkle:edSignature= attribute" >&2
+    echo "[generate-appcast]   got: $SIGNATURE_INFO" >&2
     exit 1
 fi
 
