@@ -27,8 +27,17 @@ jobs:
           path: .build/cache/ncnn
           key: ncnn-vulkan-20220424-${{ runner.os }}
 
+      - name: Cache Core ML model download
+        uses: actions/cache@v4
+        with:
+          path: .build/cache/coreml
+          key: coreml-realesrgan-mszpro-2024-07-15-${{ runner.os }}
+
       - name: Fetch ncnn-vulkan binary + models
         run: ./scripts/fetch-ncnn-binary.sh
+
+      - name: Fetch Core ML model + compile to .mlmodelc
+        run: ./scripts/fetch-coreml-model.sh
 
       - name: Build executable (release)
         run: |
