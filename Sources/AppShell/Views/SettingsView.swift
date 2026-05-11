@@ -19,8 +19,9 @@ public struct SettingsView: View {
         Form {
             Section("Motor (Engine)") {
                 Picker("Tercih edilen motor", selection: $settings.enginePreference) {
-                    Text("ncnn-vulkan (Faz 1)").tag("ncnn")
-                    Text("Core ML (Faz 2 — Apple Silicon)").tag("coreml")
+                    Text("Otomatik (önerilen) — Core ML").tag("auto")
+                    Text("Core ML (Apple Neural Engine)").tag("coreml")
+                    Text("ncnn-vulkan (Metal GPU, Faz 1)").tag("ncnn")
                 }
                 .pickerStyle(.menu)
 
@@ -86,10 +87,12 @@ public struct SettingsView: View {
 
     private var engineHint: String {
         switch settings.enginePreference {
+        case "auto":
+            return "Cihazına göre en hızlı motoru seçer. Apple Silicon'da Core ML (ANE), ölçüm 5× daha hızlı ncnn'den (docs/BENCHMARKS.md). Core ML yüklenemezse ncnn'e düşer."
         case "coreml":
-            return "Core ML, Apple Silicon ANE/GPU üzerinden çalışır. M4 Pro deneyiminde ncnn'den ~5× daha hızlı (Step 0 spike). 4× upscale."
+            return "Core ML, Apple Neural Engine üzerinden çalışır. Tüm 1026 model katmanı ANE'de (100% delegation). 4× upscale, sabit. Bench: 5.2× ncnn'den hızlı."
         default:
-            return "ncnn-vulkan subprocess, MoltenVK → Metal GPU. 2× / 3× / 4× upscale, 5 model varyantı."
+            return "ncnn-vulkan subprocess, MoltenVK → Metal GPU. 2× / 3× / 4× upscale, 5 model varyantı. Faz 1 path."
         }
     }
 }

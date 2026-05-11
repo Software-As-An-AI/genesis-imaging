@@ -7,7 +7,7 @@ import Observation
 /// SwiftUI views can two-way bind via `@Bindable`.
 ///
 /// Defaults:
-/// - enginePreference: "ncnn"
+/// - enginePreference: "auto"   (Faz 2 — resolves to coreml on Apple Silicon)
 /// - defaultModel:     "realesrgan-x4plus"
 /// - defaultScale:     4
 /// - defaultTileSize:  0   (auto)
@@ -42,7 +42,7 @@ public final class SettingsStore {
     /// suite isn't supported here to keep the surface area small for Faz 1.
     public init() {
         let ud = UserDefaults.standard
-        self.enginePreference = ud.string(forKey: Keys.enginePreference) ?? "ncnn"
+        self.enginePreference = ud.string(forKey: Keys.enginePreference) ?? "auto"
         self.defaultModel = ud.string(forKey: Keys.defaultModel) ?? "realesrgan-x4plus"
         let scale = ud.integer(forKey: Keys.defaultScale)
         self.defaultScale = scale == 0 ? 4 : scale
