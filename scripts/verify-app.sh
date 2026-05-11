@@ -19,6 +19,8 @@ required=(
     "$APP/Contents/Resources/bin/models/realesrgan-x4plus.bin"
     "$APP/Contents/Resources/bin/models/realesrgan-x4plus.param"
     "$APP/Contents/Info.plist"
+    "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle"
+    "$APP/Contents/Frameworks/Sparkle.framework/Sparkle"
 )
 for f in "${required[@]}"; do
     if [ ! -e "$f" ]; then

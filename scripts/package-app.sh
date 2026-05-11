@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # scripts/package-app.sh — Assemble .app bundle from `swift build -c release` output
-# plus ncnn binary + models bundled under Resources/bin/.
+# plus ncnn binary + models bundled under Resources/bin/, plus Sparkle.framework
+# bundled under Frameworks/ (required: executable links @rpath/Sparkle.framework/...).
 #
 # Layout produced:
 #   build/GenesisImaging.app/
 #     Contents/
-#       MacOS/GenesisImaging                       (Swift executable)
+#       MacOS/GenesisImaging                       (Swift executable, rpath = ../Frameworks)
 #       Info.plist
+#       Frameworks/
+#         Sparkle.framework/                       (binary framework, Versions/B as Current)
 #       Resources/
 #         bin/realesrgan-ncnn-vulkan
 #         bin/models/*.{bin,param}
@@ -53,6 +56,56 @@ mkdir -p "$APP/Contents/Resources/bin/models"
 # Executable
 cp "$EXEC_SRC" "$APP/Contents/MacOS/GenesisImaging"
 chmod +x "$APP/Contents/MacOS/GenesisImaging"
+
+# Sparkle.framework — bundled under Contents/Frameworks/. The executable links
+# @rpath/Sparkle.framework/Versions/B/Sparkle (compiled by SwiftPM); without the
+# framework copy + correct LC_RPATH, the app crashes at launch with:
+#   "Library not loaded: @rpath/Sparkle.framework/Versions/B/Sparkle"
+#
+# Source candidates (in order of preference; xcframework is canonical for binary
+# distributions, the linker copy is a side-effect of SwiftPM):
+#   1. .build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework
+#   2. .build/arm64-apple-macosx/release/Sparkle.framework
+SPARKLE_FW_SRC=""
+SPARKLE_CANDIDATES=(
+    ".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+    ".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64/Sparkle.framework"
+    ".build/arm64-apple-macosx/release/Sparkle.framework"
+)
+for cand in "${SPARKLE_CANDIDATES[@]}"; do
+    if [ -d "$cand" ]; then
+        SPARKLE_FW_SRC="$cand"
+        break
+    fi
+done
+if [ -z "$SPARKLE_FW_SRC" ]; then
+    echo "[package-app] ✗ Sparkle.framework not found in any candidate path:" >&2
+    printf '[package-app]     %s\n' "${SPARKLE_CANDIDATES[@]}" >&2
+    echo "[package-app]   Run 'swift build -c release' first (resolves Sparkle SPM dep)." >&2
+    exit 1
+fi
+echo "[package-app] Sparkle source: $SPARKLE_FW_SRC"
+
+mkdir -p "$APP/Contents/Frameworks"
+# -R recursive, -P preserve symlinks (critical: framework relies on
+# Versions/Current → B and toplevel Sparkle → Versions/Current/Sparkle linkage).
+# rsync would also work; cp -RP avoids the rsync dependency.
+cp -RP "$SPARKLE_FW_SRC" "$APP/Contents/Frameworks/Sparkle.framework"
+
+# Strip the prebuilt _CodeSignature: signing identity in CI differs from the
+# Sparkle distribution's signature. Re-signing happens in release.yml; locally
+# this leaves the framework unsigned but loadable.
+rm -rf "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/_CodeSignature"
+
+# Ensure executable has the rpath entry pointing into Frameworks/. SwiftPM only
+# injects @loader_path by default; without @executable_path/../Frameworks the
+# dyld lookup fails at launch.
+if ! otool -l "$APP/Contents/MacOS/GenesisImaging" | grep -A2 LC_RPATH | grep -q "@executable_path/../Frameworks"; then
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/GenesisImaging"
+    echo "[package-app]   ✓ added rpath @executable_path/../Frameworks"
+else
+    echo "[package-app]   ✓ rpath @executable_path/../Frameworks already present"
+fi
 
 # ncnn binary + models
 cp "$NCNN_SRC" "$APP/Contents/Resources/bin/realesrgan-ncnn-vulkan"
@@ -126,6 +179,8 @@ PLIST
 
 echo "[package-app] ✓ $APP"
 echo "[package-app]   Executable: $(du -h "$APP/Contents/MacOS/GenesisImaging" | awk '{print $1}')"
+echo "[package-app]   Frameworks:"
+du -sh "$APP/Contents/Frameworks"/* 2>/dev/null | sed 's/^/[package-app]     /'
 echo "[package-app]   Resources:"
 du -sh "$APP/Contents/Resources/bin"/* 2>/dev/null | sed 's/^/[package-app]     /'
 echo "[package-app]   Total .app size: $(du -sh "$APP" | awk '{print $1}')"

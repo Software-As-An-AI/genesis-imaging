@@ -111,6 +111,38 @@ jobs:
           IDENTITY="Developer ID Application: ${APPLE_DEVELOPER_NAME} (${APPLE_TEAM_ID})"
           echo "Signing with: $IDENTITY"
 
+          # Inside-out signing order (Apple's nested-signing rule):
+          # nested helpers/services first → framework → bundled binaries →
+          # main executable → outer .app. Re-signing Sparkle with our identity
+          # is required for notarization (each Mach-O must carry our team's
+          # Developer ID signature + secure timestamp + Hardened Runtime).
+          SPARKLE_FW="${APP}/Contents/Frameworks/Sparkle.framework"
+          SPARKLE_VER="${SPARKLE_FW}/Versions/B"
+          if [ -d "$SPARKLE_FW" ]; then
+            # Sparkle 2.x XPC services (Installer + Downloader)
+            for xpc in "${SPARKLE_VER}/XPCServices"/*.xpc; do
+              [ -d "$xpc" ] || continue
+              codesign --force --options runtime --timestamp \
+                --sign "$IDENTITY" "$xpc"
+            done
+            # Autoupdate helper (Mach-O)
+            if [ -f "${SPARKLE_VER}/Autoupdate" ]; then
+              codesign --force --options runtime --timestamp \
+                --sign "$IDENTITY" "${SPARKLE_VER}/Autoupdate"
+            fi
+            # Updater.app helper bundle
+            if [ -d "${SPARKLE_VER}/Updater.app" ]; then
+              codesign --force --options runtime --timestamp \
+                --sign "$IDENTITY" "${SPARKLE_VER}/Updater.app"
+            fi
+            # Framework as a whole (signs the versioned Sparkle dylib + _CodeSignature)
+            codesign --force --options runtime --timestamp \
+              --sign "$IDENTITY" "$SPARKLE_FW"
+            echo "✅ Sparkle.framework re-signed (XPCs + Autoupdate + Updater.app + fw)"
+          else
+            echo "::warning::Sparkle.framework not bundled — auto-update will fail; check package-app.sh"
+          fi
+
           codesign --force --options runtime --timestamp \
             --sign "$IDENTITY" "${APP}/Contents/Resources/bin/realesrgan-ncnn-vulkan"
           codesign --force --options runtime --timestamp \
