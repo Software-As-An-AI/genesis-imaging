@@ -222,6 +222,7 @@ jobs:
           HAS_SPARKLE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY != '' }}
           PORTAL_TOKEN: ${{ steps.portal-app-token.outputs.token }}
           VERSION: ${{ github.ref_name }}
+          GIT_TERMINAL_PROMPT: "0"
         run: |
           set -euo pipefail
           if [ ! -f appcast.xml ]; then
@@ -231,9 +232,19 @@ jobs:
           # GitHub App installation token (org-aligned auth).
           # App: genesis-imaging-release-bot, scoped to softwareasan-portal only.
           # Permissions: Contents=Read+Write, Metadata=Read.
-          git clone --depth 1 \
-            "https://x-access-token:${PORTAL_TOKEN}@github.com/Software-As-An-AI/softwareasan-portal.git" \
-            /tmp/portal
+          #
+          # Auth pattern (defensive): use http.extraheader (matches actions/checkout
+          # idiom) instead of URL-embedded `x-access-token:TOKEN@host` basic auth.
+          # The URL-embedded pattern hangs on macOS runners due to credential
+          # helper (osxkeychain) intercepting auth + falling to interactive prompt
+          # when token is rejected silently — never fails fast.
+          # GIT_TERMINAL_PROMPT=0 + empty credential.helper = fail-fast on bad auth.
+          AUTH_HEADER="Authorization: token ${PORTAL_TOKEN}"
+          git -c credential.helper= \
+              -c "http.https://github.com/.extraheader=${AUTH_HEADER}" \
+              clone --depth 1 \
+              https://github.com/Software-As-An-AI/softwareasan-portal.git \
+              /tmp/portal
           mkdir -p /tmp/portal/public/genesis-imaging
           cp appcast.xml /tmp/portal/public/genesis-imaging/appcast.xml
           cd /tmp/portal
@@ -247,7 +258,9 @@ jobs:
           git -c user.email=release-bot@genesis.local \
               -c user.name="genesis-imaging-release-bot" \
               commit -m "chore(appcast): genesis-imaging ${VERSION} (auto-generated, ed25519-signed)"
-          git push origin main
+          git -c credential.helper= \
+              -c "http.https://github.com/.extraheader=${AUTH_HEADER}" \
+              push origin main
           echo "✅ appcast.xml published to softwareasan-portal main"
 
       - name: List release artifacts
