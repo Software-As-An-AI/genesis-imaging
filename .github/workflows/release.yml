@@ -233,13 +233,15 @@ jobs:
           # App: genesis-imaging-release-bot, scoped to softwareasan-portal only.
           # Permissions: Contents=Read+Write, Metadata=Read.
           #
-          # Auth pattern (defensive): use http.extraheader (matches actions/checkout
-          # idiom) instead of URL-embedded `x-access-token:TOKEN@host` basic auth.
-          # The URL-embedded pattern hangs on macOS runners due to credential
-          # helper (osxkeychain) intercepting auth + falling to interactive prompt
-          # when token is rejected silently — never fails fast.
+          # Auth pattern (defensive): use http.extraheader with HTTP Basic auth
+          # (base64-encoded `x-access-token:TOKEN`) — the EXACT pattern used by
+          # actions/checkout. Both `Authorization: token TOKEN` API-style and
+          # URL-embedded basic auth FAIL on macOS runners (URL-embedded hangs on
+          # osxkeychain credential helper; token-style header is silently ignored
+          # by git's HTTP smart transport which expects Basic auth).
           # GIT_TERMINAL_PROMPT=0 + empty credential.helper = fail-fast on bad auth.
-          AUTH_HEADER="Authorization: token ${PORTAL_TOKEN}"
+          B64_AUTH=$(printf '%s' "x-access-token:${PORTAL_TOKEN}" | base64 | tr -d '\n')
+          AUTH_HEADER="AUTHORIZATION: basic ${B64_AUTH}"
           git -c credential.helper= \
               -c "http.https://github.com/.extraheader=${AUTH_HEADER}" \
               clone --depth 1 \
