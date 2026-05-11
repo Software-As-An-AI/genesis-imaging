@@ -204,43 +204,50 @@ jobs:
           xmllint --noout appcast.xml
           echo "✅ appcast.xml generated + xmllint valid ($(wc -l < appcast.xml) lines)"
 
-      - name: Publish appcast.xml to softwareasan-portal
-        if: ${{ env.HAS_PORTAL_KEY == 'true' }}
+      - name: Generate softwareasan-portal installation token
+        if: ${{ env.HAS_SPARKLE_KEY == 'true' }}
+        id: portal-app-token
         env:
-          HAS_PORTAL_KEY: ${{ secrets.PORTAL_DEPLOY_KEY != '' }}
-          PORTAL_DEPLOY_KEY: ${{ secrets.PORTAL_DEPLOY_KEY }}
+          HAS_SPARKLE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY != '' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.PORTAL_APP_ID }}
+          private-key: ${{ secrets.PORTAL_APP_PRIVATE_KEY }}
+          owner: Software-As-An-AI
+          repositories: softwareasan-portal
+
+      - name: Publish appcast.xml to softwareasan-portal
+        if: ${{ env.HAS_SPARKLE_KEY == 'true' }}
+        env:
+          HAS_SPARKLE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY != '' }}
+          PORTAL_TOKEN: ${{ steps.portal-app-token.outputs.token }}
           VERSION: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
           if [ ! -f appcast.xml ]; then
             echo "::warning::appcast.xml missing — skipping cross-repo publish"
             exit 0
           fi
-          # SSH deploy key (repo-scoped write access to softwareasan-portal).
-          # Cleaner than a user-scoped PAT — only this one repo can be written.
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          echo "$PORTAL_DEPLOY_KEY" > ~/.ssh/portal_deploy
-          chmod 600 ~/.ssh/portal_deploy
-          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
-          export GIT_SSH_COMMAND="ssh -i ~/.ssh/portal_deploy -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes"
-
+          # GitHub App installation token (org-aligned auth).
+          # App: genesis-imaging-release-bot, scoped to softwareasan-portal only.
+          # Permissions: Contents=Read+Write, Metadata=Read.
           git clone --depth 1 \
-            git@github.com:Software-As-An-AI/softwareasan-portal.git \
+            "https://x-access-token:${PORTAL_TOKEN}@github.com/Software-As-An-AI/softwareasan-portal.git" \
             /tmp/portal
           mkdir -p /tmp/portal/public/genesis-imaging
           cp appcast.xml /tmp/portal/public/genesis-imaging/appcast.xml
           cd /tmp/portal
-          git config user.email "release-bot@genesis.local"
-          git config user.name "genesis-imaging-release-bot"
           if git diff --quiet public/genesis-imaging/appcast.xml; then
             echo "appcast.xml unchanged — nothing to commit"
-            rm -f ~/.ssh/portal_deploy
             exit 0
           fi
-          git add public/genesis-imaging/appcast.xml
-          git commit -m "chore(appcast): genesis-imaging ${VERSION} (auto-generated, ed25519-signed)"
+          git -c user.email=release-bot@genesis.local \
+              -c user.name="genesis-imaging-release-bot" \
+              add public/genesis-imaging/appcast.xml
+          git -c user.email=release-bot@genesis.local \
+              -c user.name="genesis-imaging-release-bot" \
+              commit -m "chore(appcast): genesis-imaging ${VERSION} (auto-generated, ed25519-signed)"
           git push origin main
-          rm -f ~/.ssh/portal_deploy
           echo "✅ appcast.xml published to softwareasan-portal main"
 
       - name: List release artifacts
