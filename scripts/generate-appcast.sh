@@ -46,16 +46,22 @@ if [ -z "${SPARKLE_ED25519_PRIVATE_KEY:-}" ]; then
 fi
 
 # ── Write private key to temp file (sign_update reads file, not env) ───────
+# Sparkle's `generate_keys -x` exports the 32-byte ed25519 seed already
+# base64-encoded as a 44-char text file. `sign_update --ed-key-file` reads
+# that same format — so we write the secret value AS-IS without decoding.
+# (An earlier draft of this script base64-decoded the value into raw bytes,
+# which made sign_update fail with "Unable to read EdDSA private key data
+# as UTF-8 string". The secret stored in GitHub Actions is already the
+# base64 text produced by `generate_keys -x`.)
 PRIV_KEY_FILE=$(mktemp -t sparkle-priv.XXXXXX)
 trap 'rm -f "$PRIV_KEY_FILE"' EXIT INT TERM
-echo "$SPARKLE_ED25519_PRIVATE_KEY" | base64 --decode > "$PRIV_KEY_FILE" 2>/dev/null \
-    || echo "$SPARKLE_ED25519_PRIVATE_KEY" > "$PRIV_KEY_FILE"
+printf '%s' "$SPARKLE_ED25519_PRIVATE_KEY" > "$PRIV_KEY_FILE"
 
 # Verify the key file has content (wisdom_d4fda9ab — defensive against
-# empty-secret silent fail)
+# empty-secret silent fail). Local export is 44 bytes (base64 of 32-byte seed).
 PRIV_KEY_SIZE=$(wc -c < "$PRIV_KEY_FILE" | tr -d ' ')
-if [ "$PRIV_KEY_SIZE" -lt 30 ]; then
-    echo "[generate-appcast] ✗ private key suspiciously small ($PRIV_KEY_SIZE bytes) — check SPARKLE_ED25519_PRIVATE_KEY secret" >&2
+if [ "$PRIV_KEY_SIZE" -lt 40 ] || [ "$PRIV_KEY_SIZE" -gt 60 ]; then
+    echo "[generate-appcast] ✗ private key size suspicious ($PRIV_KEY_SIZE bytes, expected ~44) — check SPARKLE_ED25519_PRIVATE_KEY secret" >&2
     exit 1
 fi
 
