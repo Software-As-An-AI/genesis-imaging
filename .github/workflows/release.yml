@@ -148,6 +148,18 @@ jobs:
 
           codesign --force --options runtime --timestamp \
             --sign "$IDENTITY" "${APP}/Contents/Resources/bin/realesrgan-ncnn-vulkan"
+
+          # Smart Output bundled binaries (v0.3.1+). Sign deepest-leaf-first:
+          # dylibs before the binary that links them, so signature verification
+          # walks the tree correctly. Skip silently if files absent (older builds).
+          for SMART in liblcms2.2.dylib libpng16.16.dylib pngquant oxipng; do
+            SMART_PATH="${APP}/Contents/Resources/bin/$SMART"
+            if [ -f "$SMART_PATH" ]; then
+              codesign --force --options runtime --timestamp \
+                --sign "$IDENTITY" "$SMART_PATH"
+            fi
+          done
+
           codesign --force --options runtime --timestamp \
             --sign "$IDENTITY" "${APP}/Contents/MacOS/GenesisImaging"
           codesign --force --options runtime --timestamp \
