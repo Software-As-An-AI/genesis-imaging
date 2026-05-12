@@ -25,6 +25,13 @@ Resources/bin/realesrgan-ncnn-vulkan.exe
 Resources/bin/models/*.bin
 Resources/bin/models/*.param
 
+# Smart Output binaries — fetch-smart-output-binaries.sh ile kurulur (brew).
+Resources/bin/pngquant
+Resources/bin/oxipng
+Resources/bin/liblcms2.2.dylib
+Resources/bin/libpng16.16.dylib
+Resources/bin/.smart-output-version
+
 # Notarization staging
 *-notarize.zip
 notarization-log.json

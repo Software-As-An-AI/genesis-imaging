@@ -62,6 +62,19 @@ public struct SettingsView: View {
                 }
             }
 
+            Section("Smart Output (Sıkıştırma)") {
+                Picker("Mod", selection: $settings.smartOutputMode) {
+                    Text("Kapalı").tag(SmartOutputMode.off)
+                    Text("Otomatik (önerilen)").tag(SmartOutputMode.auto)
+                    Text("Her Zaman").tag(SmartOutputMode.always)
+                }
+                .pickerStyle(.segmented)
+
+                Text(smartOutputHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Hakkında") {
                 LabeledContent("Uygulama", value: "Genesis Imaging")
                 LabeledContent("Sürüm", value: appVersion)
@@ -93,6 +106,17 @@ public struct SettingsView: View {
             return "Core ML, Apple Neural Engine üzerinden çalışır. Tüm 1026 model katmanı ANE'de (100% delegation). 4× upscale, sabit. Bench: 5.2× ncnn'den hızlı."
         default:
             return "ncnn-vulkan subprocess, MoltenVK → Metal GPU. 2× / 3× / 4× upscale, 5 model varyantı. Faz 1 path."
+        }
+    }
+
+    private var smartOutputHint: String {
+        switch settings.smartOutputMode {
+        case .off:
+            return "Sıkıştırma yok — motor ne yazdıysa o kalır."
+        case .auto:
+            return "Boyama kitabı, line art veya sınırlı palet içerik otomatik tespit edilip palet quantization + lossless optimizer ile küçültülür (B/W'de 5-20× azalma, near-lossless). Fotoğraflar dokunulmadan kalır."
+        case .always:
+            return "Tüm çıktılarda pngquant + oxipng uygulanır. Sürekli ton fotoğraflarda hafif kalite kaybı olabilir."
         }
     }
 }

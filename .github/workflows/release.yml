@@ -36,6 +36,9 @@ jobs:
       - name: Fetch ncnn-vulkan binary + models
         run: ./scripts/fetch-ncnn-binary.sh
 
+      - name: Fetch Smart Output binaries (pngquant + oxipng)
+        run: ./scripts/fetch-smart-output-binaries.sh
+
       - name: Fetch Core ML model + compile to .mlmodelc
         run: ./scripts/fetch-coreml-model.sh
 

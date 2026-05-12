@@ -112,6 +112,21 @@ cp "$NCNN_SRC" "$APP/Contents/Resources/bin/realesrgan-ncnn-vulkan"
 chmod +x "$APP/Contents/Resources/bin/realesrgan-ncnn-vulkan"
 cp -R "$MODELS_SRC/." "$APP/Contents/Resources/bin/models/"
 
+# Smart Output binaries (pngquant + oxipng + libpng + liblcms2 dylibs).
+# Used by SmartOutputProcessor for palette-aware post-upscale compression
+# (5-20× reduction on B/W / line art / limited-palette content).
+# install_name_tool rewrites in pngquant point at @executable_path/<dylib>,
+# i.e. siblings of pngquant inside Resources/bin/.
+for SMART_BIN in pngquant oxipng liblcms2.2.dylib libpng16.16.dylib; do
+    SMART_SRC="Resources/bin/$SMART_BIN"
+    if [ -f "$SMART_SRC" ]; then
+        cp "$SMART_SRC" "$APP/Contents/Resources/bin/$SMART_BIN"
+        chmod +x "$APP/Contents/Resources/bin/$SMART_BIN" 2>/dev/null || true
+    else
+        echo "[package-app] ! $SMART_SRC missing — Smart Output post-process will degrade gracefully (.auto skips, .always errors)" >&2
+    fi
+done
+
 # Core ML compiled model (Faz 2). NOTICES.md is always copied if present;
 # .mlmodelc is conditional so Faz-1-only workflows still package successfully.
 mkdir -p "$APP/Contents/Resources/models"

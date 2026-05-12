@@ -11,6 +11,7 @@ import Observation
 /// - defaultModel:     "realesrgan-x4plus"
 /// - defaultScale:     4
 /// - defaultTileSize:  0   (auto)
+/// - smartOutputMode:  .auto (post-upscale palette-aware compression)
 @Observable
 public final class SettingsStore {
     public static let shared = SettingsStore()
@@ -31,11 +32,16 @@ public final class SettingsStore {
         didSet { UserDefaults.standard.set(defaultTileSize, forKey: Keys.defaultTileSize) }
     }
 
+    public var smartOutputMode: SmartOutputMode {
+        didSet { UserDefaults.standard.set(smartOutputMode.rawValue, forKey: Keys.smartOutputMode) }
+    }
+
     private enum Keys {
         static let enginePreference = "engine.preference"
         static let defaultModel = "engine.defaultModel"
         static let defaultScale = "engine.defaultScale"
         static let defaultTileSize = "engine.defaultTileSize"
+        static let smartOutputMode = "output.smartOutputMode"
     }
 
     /// Public initializer — primarily for `.shared`. A custom `UserDefaults`
@@ -47,5 +53,8 @@ public final class SettingsStore {
         let scale = ud.integer(forKey: Keys.defaultScale)
         self.defaultScale = scale == 0 ? 4 : scale
         self.defaultTileSize = ud.integer(forKey: Keys.defaultTileSize) // 0 = auto, valid default
+        self.smartOutputMode = SmartOutputMode(
+            rawValue: ud.string(forKey: Keys.smartOutputMode) ?? ""
+        ) ?? .auto
     }
 }

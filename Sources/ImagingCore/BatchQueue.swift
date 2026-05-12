@@ -341,6 +341,22 @@ public final class BatchQueue: ObservableObject {
         do {
             try await runEngineStream(engine: engine, request: request, itemIndex: idx)
 
+            // Post-process: palette-aware compression on tmpURL before atomic
+            // move. Engine already succeeded — if smart output throws, log and
+            // proceed with the un-optimized tmp file (engine's work is intact).
+            let smartMode = SettingsStore.shared.smartOutputMode
+            if smartMode != .off {
+                do {
+                    _ = try SmartOutputProcessor().process(url: tmpURL, mode: smartMode)
+                } catch {
+                    // Non-fatal: engine output is still on disk at tmpURL.
+                    // Log via stderr so packaged builds capture it in Console.app.
+                    FileHandle.standardError.write(Data(
+                        "[smart-output] post-process failed (non-fatal): \(error)\n".utf8
+                    ))
+                }
+            }
+
             // Engine wrote bytes to tmpURL — promote atomically.
             try Self.atomicMove(from: tmpURL, to: finalURL)
 

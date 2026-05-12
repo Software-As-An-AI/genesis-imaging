@@ -113,6 +113,18 @@ public final class UpscaleViewModel {
                     progress = max(0.0, min(1.0, pct / 100.0))
                 case .completed(let result):
                     progress = 1.0
+                    // Post-process: palette-aware compression. Engine succeeded —
+                    // any failure here is non-fatal (engine's output is on disk).
+                    let smartMode = SettingsStore.shared.smartOutputMode
+                    if smartMode != .off {
+                        do {
+                            _ = try SmartOutputProcessor().process(url: result.outputURL, mode: smartMode)
+                        } catch {
+                            FileHandle.standardError.write(Data(
+                                "[smart-output] post-process failed (non-fatal): \(error)\n".utf8
+                            ))
+                        }
+                    }
                     state = .completed(result.outputURL)
                     await Self.notifyCompleted(result: result, request: request)
                 case .failed(let err):
