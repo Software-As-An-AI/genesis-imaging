@@ -34,36 +34,38 @@ final class ContentDetectorTests: XCTestCase {
         return url
     }
 
-    /// Generate a continuous-tone gradient PNG. With per-pixel R/G variation
-    /// this will have many thousands of unique colors — `isLowEntropy` MUST be false.
-    private func generateGradientPNG(size: Int = 512) throws -> URL {
-        let url = tempURL(suffix: "gradient")
+    /// Generate a photo-like fixture by writing pseudo-random RGB per pixel.
+    /// At 1024×1024 this produces ~500K-1M unique RGB values — far above the
+    /// 65536 low-entropy threshold (raised 2026-05-13 iter 2 to admit ncnn-
+    /// upscaled anti-aliased B/W content, which empirically measures 10K-15K
+    /// unique colors). Keeps the high-entropy classification test meaningful.
+    private func generateGradientPNG(size: Int = 2560) throws -> URL {
+        let url = tempURL(suffix: "highentropy")
+        let bytesPerPixel = 4
+        let bytesPerRow = size * bytesPerPixel
+        var buffer = [UInt8](repeating: 0, count: size * bytesPerRow)
+        var state: UInt32 = 0xDEADBEEF
+        for i in 0..<(size * size) {
+            state &*= 1664525
+            state &+= 1013904223  // LCG (Numerical Recipes)
+            let off = i * bytesPerPixel
+            buffer[off]     = UInt8(state & 0xFF)
+            buffer[off + 1] = UInt8((state >> 8) & 0xFF)
+            buffer[off + 2] = UInt8((state >> 16) & 0xFF)
+            buffer[off + 3] = 0xFF  // alpha
+        }
         let cs = CGColorSpaceCreateDeviceRGB()
-        let ctx = CGContext(
-            data: nil, width: size, height: size,
-            bitsPerComponent: 8, bytesPerRow: 0,
-            space: cs,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
-        // Draw the gradient by setting pixels directly via repeated rectangle fills.
-        // 8x8 cells -> 64×64 = 4096 unique colors well above the 256 threshold.
-        let cells = 64
-        let cellSize = CGFloat(size) / CGFloat(cells)
-        for y in 0..<cells {
-            for x in 0..<cells {
-                ctx.setFillColor(CGColor(
-                    red: CGFloat(x) / CGFloat(cells),
-                    green: CGFloat(y) / CGFloat(cells),
-                    blue: 0.5,
-                    alpha: 1
-                ))
-                ctx.fill(CGRect(
-                    x: CGFloat(x) * cellSize,
-                    y: CGFloat(y) * cellSize,
-                    width: cellSize,
-                    height: cellSize
-                ))
-            }
+        let ctx = buffer.withUnsafeMutableBytes { ptr -> CGContext? in
+            guard let base = ptr.baseAddress else { return nil }
+            return CGContext(
+                data: base, width: size, height: size,
+                bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+                space: cs,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        }
+        guard let ctx else {
+            throw NSError(domain: "test", code: 10, userInfo: nil)
         }
         try writePNG(context: ctx, to: url)
         return url
@@ -118,18 +120,16 @@ final class ContentDetectorTests: XCTestCase {
     }
 
     func testEarlyExitCeilingPreventsBlowup() throws {
-        // Gradient already triggers early-exit in current implementation.
-        // Verify that sampledPixels < total grid count when early-exit kicks in.
-        let url = try generateGradientPNG(size: 1024)
+        // Photo-like high-entropy fixture should trip either:
+        //   (a) sampledPixels < total grid count → early-exit fired, or
+        //   (b) uniqueColorCount ≥ threshold → full-scan high-entropy verdict
+        let size = 2560
+        let url = try generateGradientPNG(size: size)
         guard let a = ContentDetector.analyze(pngURL: url) else {
             XCTFail("Analysis failed")
             return
         }
-        // Total grid samples at stride 8 = (1024/8)² = 16384. Early exit
-        // happens at 2× threshold = 512. We expect either sampledCount <
-        // 16384 (early exit fired) OR uniqueColorCount > threshold (full scan,
-        // still high entropy).
-        let maxGridSamples = (1024 / 8) * (1024 / 8)
+        let maxGridSamples = (size / 8) * (size / 8)
         XCTAssertTrue(
             a.sampledPixels < maxGridSamples || a.uniqueColorCount >= ContentDetector.lowEntropyThreshold,
             "Either early-exit fired or high-entropy classification stood"

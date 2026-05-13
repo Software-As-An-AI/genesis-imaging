@@ -56,7 +56,11 @@ public final class UpscaleViewModel {
         // allow a fresh start by resetting progress.
         if case .running = state { return }
 
-        let derivedOutput = Self.deriveOutputURL(for: inputURL)
+        // Resolve output URL using the current Smart Output mode tag so the
+        // filename advertises which compression pipeline produced it
+        // (`<stem>-upscaled-<mode>.png`). Default Off keeps legacy filename.
+        let smartMode = SettingsStore.shared.smartOutputMode
+        let derivedOutput = Self.deriveOutputURL(for: inputURL, mode: smartMode)
         outputURL = derivedOutput
         state = .running
         progress = 0.0
@@ -116,16 +120,30 @@ public final class UpscaleViewModel {
                     // Post-process: palette-aware compression. Engine succeeded —
                     // any failure here is non-fatal (engine's output is on disk).
                     let smartMode = SettingsStore.shared.smartOutputMode
+                    var finalOutputURL = result.outputURL
                     if smartMode != .off {
                         do {
-                            _ = try SmartOutputProcessor().process(url: result.outputURL, mode: smartMode)
+                            let pr = try SmartOutputProcessor().process(
+                                url: result.outputURL, mode: smartMode
+                            )
+                            // When .adaptive picked a concrete sub-mode, rewrite
+                            // the filename to advertise it: `-upscaled-adaptive`
+                            // → `-upscaled-adaptive-<picked>`.
+                            if smartMode == .adaptive, let picked = pr.adaptivePicked {
+                                if let renamed = Self.renameWithAdaptivePicked(
+                                    url: result.outputURL, picked: picked
+                                ) {
+                                    finalOutputURL = renamed
+                                }
+                            }
                         } catch {
                             FileHandle.standardError.write(Data(
                                 "[smart-output] post-process failed (non-fatal): \(error)\n".utf8
                             ))
                         }
                     }
-                    state = .completed(result.outputURL)
+                    outputURL = finalOutputURL
+                    state = .completed(finalOutputURL)
                     await Self.notifyCompleted(result: result, request: request)
                 case .failed(let err):
                     state = .failed(Self.describe(err))
@@ -158,22 +176,68 @@ public final class UpscaleViewModel {
 
     // MARK: - Helpers
 
-    /// Compute `<input-stem>-upscaled.png` next to the input file.
-    /// Resolves collisions by appending `-1`, `-2`, ... before the suffix.
-    static func deriveOutputURL(for input: URL) -> URL {
+    /// Compute `<input-stem>-upscaled[-<mode-tag>].png` next to the input file.
+    /// `.off` mode keeps the legacy `<stem>-upscaled.png` filename for
+    /// backward compat. All other modes append the mode tag so the operator
+    /// can tell at a glance which compression pipeline produced the file.
+    /// Resolves collisions by appending `-1`, `-2`, ... before the extension.
+    static func deriveOutputURL(for input: URL, mode: SmartOutputMode = .auto) -> URL {
         let dir = input.deletingLastPathComponent()
         let stem = input.deletingPathExtension().lastPathComponent
-        let candidate = dir.appendingPathComponent("\(stem)-upscaled.png")
+        let tagSuffix = mode.filenameTag.map { "-\($0)" } ?? ""
+        let base = "\(stem)-upscaled\(tagSuffix)"
+
+        let candidate = dir.appendingPathComponent("\(base).png")
         if !FileManager.default.fileExists(atPath: candidate.path) {
             return candidate
         }
         var counter = 1
         while true {
-            let next = dir.appendingPathComponent("\(stem)-upscaled-\(counter).png")
+            let next = dir.appendingPathComponent("\(base)-\(counter).png")
             if !FileManager.default.fileExists(atPath: next.path) {
                 return next
             }
             counter += 1
+        }
+    }
+
+    /// Rename a file that ends in `-upscaled-adaptive.png` (or `-adaptive-<n>.png`)
+    /// to inject the picked sub-mode tag: `-upscaled-adaptive-<picked>.png`.
+    /// Returns the new URL on success, or `nil` if rename failed.
+    static func renameWithAdaptivePicked(url: URL, picked: SmartOutputMode) -> URL? {
+        let dir = url.deletingLastPathComponent()
+        let stem = url.deletingPathExtension().lastPathComponent
+        let ext = url.pathExtension
+        let pickedTag = picked.filenameTag ?? "lossless"
+        // Replace trailing `-adaptive` (with optional collision suffix) with
+        // `-adaptive-<picked>`.
+        // Examples:
+        //   foo-upscaled-adaptive          → foo-upscaled-adaptive-binarize
+        //   foo-upscaled-adaptive-1        → foo-upscaled-adaptive-binarize-1
+        //   foo-upscaled-x4-adaptive       → foo-upscaled-x4-adaptive-binarize
+        var newStem = stem
+        if let range = newStem.range(of: "-adaptive") {
+            let after = newStem[range.upperBound...]  // suffix after -adaptive
+            newStem = String(newStem[..<range.upperBound]) + "-\(pickedTag)" + String(after)
+        } else {
+            // Defensive — current filename doesn't carry the adaptive tag.
+            // Just append the picked tag so we still convey traceability.
+            newStem = "\(stem)-\(pickedTag)"
+        }
+
+        let newURL = dir.appendingPathComponent(newStem).appendingPathExtension(ext)
+        if newURL == url { return url }
+
+        do {
+            // If a file already exists at the target (rare), let the rename fail
+            // gracefully and surface the original URL — the bytes are still there.
+            if FileManager.default.fileExists(atPath: newURL.path) {
+                return nil
+            }
+            try FileManager.default.moveItem(at: url, to: newURL)
+            return newURL
+        } catch {
+            return nil
         }
     }
 

@@ -45,13 +45,15 @@ public enum OutputWriter {
     public static func resolveOutputURL(
         source: URL,
         scale: Int,
-        batchOverride: URL?
+        batchOverride: URL?,
+        smartOutputTag: String? = nil
     ) -> URL {
         let parent = (batchOverride ?? source.deletingLastPathComponent())
             .standardizedFileURL
         let ext = source.pathExtension
         let stem = source.deletingPathExtension().lastPathComponent
-        let baseStem = "\(stem)-upscaled-x\(scale)"
+        let tagSuffix = smartOutputTag.map { "-\($0)" } ?? ""
+        let baseStem = "\(stem)-upscaled-x\(scale)\(tagSuffix)"
 
         let first = parent.appendingPathComponent(baseStem)
             .appendingPathExtension(ext)
@@ -70,8 +72,6 @@ public enum OutputWriter {
             }
             counter += 1
         }
-        // Astronomically unlikely fallback — caller may still write but the
-        // name will collide. Return last candidate; tests will not hit this.
         return parent.appendingPathComponent("\(baseStem)-\(counter)")
             .appendingPathExtension(ext)
     }

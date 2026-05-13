@@ -12,10 +12,19 @@ import CoreGraphics
 public enum ContentDetector {
 
     /// Threshold below which pngquant is considered safe-to-apply.
-    /// pngquant produces 256-color palette PNG; if source already has ≤256
-    /// unique colors, quantization is lossless (or nearly so for soft
-    /// anti-aliasing).
-    public static let lowEntropyThreshold = 256
+    ///
+    /// **Empirical calibration (2026-05-13, iter 2):** Raw B/W input is
+    /// 2-color, but after ncnn/Core ML 4× upscaling the output carries
+    /// **10K-15K unique RGB values** from subpixel anti-aliasing along line
+    /// edges (initial estimate of 1K was a Python-sampler artifact; full
+    /// Swift scan on real ncnn output measured 10553 unique colors).
+    ///
+    /// 65536 admits anti-aliased line art reliably while still rejecting
+    /// continuous-tone photos (sampled photo entropy typically reaches
+    /// 100K-1M+ unique values). `SmartOutputProcessor.sizeDeltaThreshold`
+    /// is the second-line defense — any false positive that produces a
+    /// larger or equal-sized file gets discarded and the original is kept.
+    public static let lowEntropyThreshold = 65536
 
     /// Result of analysis. Returned by `analyze(pngURL:)`.
     public struct Analysis: Sendable, Equatable {

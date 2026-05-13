@@ -2,23 +2,25 @@ import Foundation
 
 /// Post-upscale PNG optimizer.
 ///
-/// Runs after the engine has written PNG bytes to disk. Detects content
-/// type (`ContentDetector`), then chains the appropriate optimizer(s):
+/// Runs after the engine has written PNG bytes to disk. Operates on a tmp
+/// copy so any failure leaves the engine's output intact. Modes:
 ///
-/// | Mode      | Detection           | Pipeline                      |
-/// |-----------|---------------------|-------------------------------|
-/// | `.off`    | —                   | (no-op)                       |
-/// | `.auto`   | low-entropy detect  | pngquant → oxipng             |
-/// | `.auto`   | high-entropy detect | oxipng only (lossless)        |
-/// | `.always` | (skipped)           | pngquant → oxipng             |
+/// | Mode         | Pipeline                                              |
+/// |--------------|-------------------------------------------------------|
+/// | `.off`       | (no-op)                                               |
+/// | `.auto`      | content detect → quantize (Q 65-100) + oxipng         |
+/// |              | OR oxipng-only when high-entropy                      |
+/// | `.always`    | pngquant Q 65-100 + oxipng                            |
+/// | `.softLoss`  | pngquant Q 40-90 + oxipng                             |
+/// | `.colors32`  | pngquant 32 colors + oxipng                           |
+/// | `.colors8`   | pngquant 8 colors + oxipng                            |
+/// | `.binarize`  | pngquant 2 colors + oxipng (saf B/W)                  |
 ///
-/// **Size-delta guard:** if optimized result is >90% of original size,
-/// discard it and keep the original. Catches false positives + guarantees
-/// "Smart Output ON" never produces a larger file than "Smart Output OFF".
+/// **Size-delta guard:** if optimized result is >90% of original, discard
+/// and keep original (false-positive defense + "never worsen" invariant).
 ///
-/// **Missing binaries:** in `.auto` mode degrades gracefully (skip,
-/// `skipReason="no-binary"`). In `.always` mode throws `.binaryMissing`
-/// so preflight surfaces the error.
+/// **Missing binaries:** `.auto` degrades gracefully (skip); other modes
+/// throw `.binaryMissing` so the caller can surface a clear error.
 public struct SmartOutputProcessor: Sendable {
     public init() {}
 
@@ -27,13 +29,38 @@ public struct SmartOutputProcessor: Sendable {
         public let finalBytes: Int
         public let wasQuantized: Bool
         public let wasOptimized: Bool
-        public let skipReason: String?  // nil = ran; otherwise "mode-off"/"no-binary"/"delta-guard"/"detect-failed"
+        public let skipReason: String?
         public let analysis: ContentDetector.Analysis?
+        /// When the request was `.adaptive`, this is the concrete sub-mode
+        /// the classifier picked (binarize / colors8 / colors32 / softLoss /
+        /// auto). Otherwise `nil`.
+        public let adaptivePicked: SmartOutputMode?
+        /// Full fingerprint computed in `.adaptive` mode (or `nil` for other modes).
+        public let fingerprint: ContentFingerprint?
 
-        /// Convenience — `1.0` means no reduction; `0.2` means 5× reduction.
         public var sizeRatio: Double {
             guard originalBytes > 0 else { return 1.0 }
             return Double(finalBytes) / Double(originalBytes)
+        }
+
+        public init(
+            originalBytes: Int,
+            finalBytes: Int,
+            wasQuantized: Bool,
+            wasOptimized: Bool,
+            skipReason: String?,
+            analysis: ContentDetector.Analysis?,
+            adaptivePicked: SmartOutputMode? = nil,
+            fingerprint: ContentFingerprint? = nil
+        ) {
+            self.originalBytes = originalBytes
+            self.finalBytes = finalBytes
+            self.wasQuantized = wasQuantized
+            self.wasOptimized = wasOptimized
+            self.skipReason = skipReason
+            self.analysis = analysis
+            self.adaptivePicked = adaptivePicked
+            self.fingerprint = fingerprint
         }
     }
 
@@ -44,152 +71,156 @@ public struct SmartOutputProcessor: Sendable {
         case ioError(String)
     }
 
-    /// The size-delta guard: any result that isn't at least this much smaller
-    /// than the original is discarded. 0.90 = "must be at least 10% smaller".
     public static let sizeDeltaThreshold: Double = 0.90
 
-    /// pngquant quality range. Lower bound 65 = "discard quantization below
-    /// this quality"; upper bound 100 = best possible. Together: try to
-    /// preserve quality ≥65, fail if not possible (handled by `pngquant`
-    /// itself — exit code 99 means "couldn't quantize at requested quality").
-    public static let pngquantQualityRange = "65-100"
-
-    /// Optimize the PNG at `url` in-place. On success the file at `url` is
-    /// replaced; on no-op or skip it is left untouched.
     public func process(url: URL, mode: SmartOutputMode) throws -> ProcessResult {
         let originalBytes = fileSize(at: url)
 
-        // Mode `.off` — no-op.
         if mode == .off {
             return ProcessResult(
                 originalBytes: originalBytes,
                 finalBytes: originalBytes,
-                wasQuantized: false,
-                wasOptimized: false,
-                skipReason: "mode-off",
-                analysis: nil
+                wasQuantized: false, wasOptimized: false,
+                skipReason: "mode-off", analysis: nil
             )
         }
 
-        // Locate binaries. Behavior on missing depends on mode.
         let pngquantURL = SmartOutputLocator.pngquantURL()
         let oxipngURL = SmartOutputLocator.oxipngURL()
-
         if pngquantURL == nil || oxipngURL == nil {
-            if mode == .always {
+            // .auto AND .adaptive degrade gracefully on missing binaries.
+            // Power-user modes throw so the operator notices.
+            if mode != .auto && mode != .adaptive {
                 let missing = pngquantURL == nil ? "pngquant" : "oxipng"
                 throw SmartOutputError.binaryMissing(missing)
             }
-            // `.auto` — graceful degrade.
             return ProcessResult(
                 originalBytes: originalBytes,
                 finalBytes: originalBytes,
-                wasQuantized: false,
-                wasOptimized: false,
-                skipReason: "no-binary",
-                analysis: nil
+                wasQuantized: false, wasOptimized: false,
+                skipReason: "no-binary", analysis: nil
             )
         }
 
-        // Detect content. In `.always` we skip detection (force quantize).
-        var shouldQuantize: Bool
+        // Mode → pngquant decision + args.
+        var pngquantArgs: [String]? = nil  // nil = skip pngquant (oxipng-only)
         var analysis: ContentDetector.Analysis? = nil
+        var adaptivePicked: SmartOutputMode? = nil
+        var fingerprint: ContentFingerprint? = nil
+
         switch mode {
-        case .always:
-            shouldQuantize = true
-        case .auto:
-            analysis = ContentDetector.analyze(pngURL: url)
-            if let a = analysis {
-                shouldQuantize = a.isLowEntropy
-            } else {
-                // Detection failed — fall back to oxipng-only (still safe).
-                shouldQuantize = false
-            }
         case .off:
             preconditionFailure("Unreachable — handled above")
+
+        case .adaptive:
+            // Single-pass content-aware picker. Compute rich fingerprint,
+            // delegate to ContentClassifier, then continue with the picked
+            // sub-mode's pngquant args.
+            fingerprint = ContentClassifier.fingerprint(pngURL: url)
+            let picked = fingerprint.map(ContentClassifier.pickAdaptiveMode) ?? .auto
+            adaptivePicked = picked
+            switch picked {
+            case .auto:
+                pngquantArgs = nil  // oxipng-only fallback
+            case .softLoss:
+                pngquantArgs = ["--speed", "1", "--quality", "40-90"]
+            case .colors32:
+                pngquantArgs = ["--speed", "1", "32"]
+            case .colors8:
+                pngquantArgs = ["--speed", "1", "8"]
+            case .binarize:
+                pngquantArgs = ["--speed", "1", "2"]
+            case .off, .adaptive, .always:
+                pngquantArgs = nil  // unreachable in picker output
+            }
+
+        case .auto:
+            analysis = ContentDetector.analyze(pngURL: url)
+            let lowEntropy = analysis?.isLowEntropy ?? false
+            if lowEntropy {
+                pngquantArgs = ["--speed", "1", "--quality", "65-100"]
+            } else {
+                pngquantArgs = nil
+            }
+
+        case .always:
+            pngquantArgs = ["--speed", "1", "--quality", "65-100"]
+
+        case .softLoss:
+            pngquantArgs = ["--speed", "1", "--quality", "40-90"]
+
+        case .colors32:
+            pngquantArgs = ["--speed", "1", "32"]
+
+        case .colors8:
+            pngquantArgs = ["--speed", "1", "8"]
+
+        case .binarize:
+            pngquantArgs = ["--speed", "1", "2"]
         }
 
-        // Stage into a tmp file so the original is recoverable if the
-        // post-process result fails the size-delta guard.
+        // Stage tmp.
         let parent = url.deletingLastPathComponent()
         let stem = url.deletingPathExtension().lastPathComponent
         let tmpURL = parent.appendingPathComponent(".\(stem).smartout.\(UUID().uuidString).png")
         defer { try? FileManager.default.removeItem(at: tmpURL) }
 
         var wasQuantized = false
-        if shouldQuantize {
-            // pngquant input → tmp. Exit 99 = "quality too low even at min"
-            // — recover by falling through to lossless-only.
+        if let qArgs = pngquantArgs {
             let exitCode = runPngquant(
-                binary: pngquantURL!,
-                input: url,
-                output: tmpURL
+                binary: pngquantURL!, input: url, output: tmpURL,
+                extraArgs: qArgs
             )
             if exitCode == 0 {
                 wasQuantized = true
             } else if exitCode == 99 {
-                // pngquant gave up — copy original to tmp for oxipng input.
+                // pngquant gave up (quality too low or palette infeasible) —
+                // fall back to copying original for oxipng to process.
                 try copyFile(from: url, to: tmpURL)
             } else {
-                throw SmartOutputError.quantizeFailed(
-                    stderr: "pngquant exit \(exitCode)"
-                )
+                throw SmartOutputError.quantizeFailed(stderr: "pngquant exit \(exitCode)")
             }
         } else {
-            // No quantization — feed original to oxipng directly.
             try copyFile(from: url, to: tmpURL)
         }
 
-        // oxipng in-place on tmp.
         let oxiExit = runOxipng(binary: oxipngURL!, target: tmpURL)
         if oxiExit != 0 {
-            throw SmartOutputError.optimizeFailed(
-                stderr: "oxipng exit \(oxiExit)"
-            )
+            throw SmartOutputError.optimizeFailed(stderr: "oxipng exit \(oxiExit)")
         }
 
         let candidateBytes = fileSize(at: tmpURL)
-        let ratio = originalBytes > 0
-            ? Double(candidateBytes) / Double(originalBytes)
-            : 1.0
+        let ratio = originalBytes > 0 ? Double(candidateBytes) / Double(originalBytes) : 1.0
 
-        // Size-delta guard.
         if ratio > Self.sizeDeltaThreshold {
             return ProcessResult(
-                originalBytes: originalBytes,
-                finalBytes: originalBytes,
-                wasQuantized: wasQuantized,
-                wasOptimized: true,
-                skipReason: "delta-guard",
-                analysis: analysis
+                originalBytes: originalBytes, finalBytes: originalBytes,
+                wasQuantized: wasQuantized, wasOptimized: true,
+                skipReason: "delta-guard", analysis: analysis,
+                adaptivePicked: adaptivePicked, fingerprint: fingerprint
             )
         }
 
-        // Promote tmp → url.
         try replace(at: url, with: tmpURL)
         return ProcessResult(
-            originalBytes: originalBytes,
-            finalBytes: candidateBytes,
-            wasQuantized: wasQuantized,
-            wasOptimized: true,
-            skipReason: nil,
-            analysis: analysis
+            originalBytes: originalBytes, finalBytes: candidateBytes,
+            wasQuantized: wasQuantized, wasOptimized: true,
+            skipReason: nil, analysis: analysis,
+            adaptivePicked: adaptivePicked, fingerprint: fingerprint
         )
     }
 
-    // MARK: - Subprocess runners (mirror NcnnEngine.runSubprocess pattern)
+    // MARK: - Subprocess helpers
 
-    private func runPngquant(binary: URL, input: URL, output: URL) -> Int32 {
+    private func runPngquant(binary: URL, input: URL, output: URL, extraArgs: [String]) -> Int32 {
         let p = Process()
         p.executableURL = binary
-        p.arguments = [
-            "--speed", "1",
-            "--quality", Self.pngquantQualityRange,
+        // Common args + variable mode-specific args.
+        p.arguments = extraArgs + [
             "--output", output.path,
             "--force",
             input.path,
         ]
-        // Suppress chatter on stdout/stderr — we only care about exit code.
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         do {
@@ -204,10 +235,7 @@ public struct SmartOutputProcessor: Sendable {
     private func runOxipng(binary: URL, target: URL) -> Int32 {
         let p = Process()
         p.executableURL = binary
-        p.arguments = [
-            "--opt", "6",
-            target.path,  // oxipng overwrites in-place by default
-        ]
+        p.arguments = ["--opt", "2", target.path]
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         do {
@@ -222,16 +250,12 @@ public struct SmartOutputProcessor: Sendable {
     // MARK: - File helpers
 
     private func fileSize(at url: URL) -> Int {
-        (try? FileManager.default.attributesOfItem(
-            atPath: url.path
-        )[.size] as? Int) ?? 0
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
     }
 
     private func copyFile(from src: URL, to dst: URL) throws {
         let fm = FileManager.default
-        if fm.fileExists(atPath: dst.path) {
-            try fm.removeItem(at: dst)
-        }
+        if fm.fileExists(atPath: dst.path) { try fm.removeItem(at: dst) }
         do {
             try fm.copyItem(at: src, to: dst)
         } catch {
@@ -242,10 +266,7 @@ public struct SmartOutputProcessor: Sendable {
     private func replace(at dst: URL, with src: URL) throws {
         let fm = FileManager.default
         do {
-            // Atomic same-volume rename. Both files are in `dst.parent`.
-            if fm.fileExists(atPath: dst.path) {
-                try fm.removeItem(at: dst)
-            }
+            if fm.fileExists(atPath: dst.path) { try fm.removeItem(at: dst) }
             try fm.moveItem(at: src, to: dst)
         } catch {
             throw SmartOutputError.ioError("replace: \(error.localizedDescription)")

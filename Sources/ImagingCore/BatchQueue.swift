@@ -322,10 +322,12 @@ public final class BatchQueue: ObservableObject {
 
         let model = item.effectiveModel(batchDefault: defaultModel)
         let scale = item.effectiveScale(batchDefault: defaultScale)
+        let smartMode = SettingsStore.shared.smartOutputMode
         let finalURL = OutputWriter.resolveOutputURL(
             source: item.sourceURL,
             scale: scale,
-            batchOverride: batchOutputOverride
+            batchOverride: batchOutputOverride,
+            smartOutputTag: smartMode.filenameTag
         )
         let tmpURL = finalURL.deletingLastPathComponent()
             .appendingPathComponent("\(finalURL.lastPathComponent).tmp.\(UUID().uuidString)")
@@ -345,12 +347,18 @@ public final class BatchQueue: ObservableObject {
             // move. Engine already succeeded — if smart output throws, log and
             // proceed with the un-optimized tmp file (engine's work is intact).
             let smartMode = SettingsStore.shared.smartOutputMode
+            var resolvedFinalURL = finalURL
             if smartMode != .off {
                 do {
-                    _ = try SmartOutputProcessor().process(url: tmpURL, mode: smartMode)
+                    let pr = try SmartOutputProcessor().process(url: tmpURL, mode: smartMode)
+                    // When .adaptive picked a concrete sub-mode, swap the
+                    // base finalURL filename tag from `adaptive` to
+                    // `adaptive-<picked>` so the on-disk name advertises
+                    // the decision.
+                    if smartMode == .adaptive, let picked = pr.adaptivePicked {
+                        resolvedFinalURL = Self.swapAdaptiveTag(finalURL, with: picked)
+                    }
                 } catch {
-                    // Non-fatal: engine output is still on disk at tmpURL.
-                    // Log via stderr so packaged builds capture it in Console.app.
                     FileHandle.standardError.write(Data(
                         "[smart-output] post-process failed (non-fatal): \(error)\n".utf8
                     ))
@@ -358,13 +366,13 @@ public final class BatchQueue: ObservableObject {
             }
 
             // Engine wrote bytes to tmpURL — promote atomically.
-            try Self.atomicMove(from: tmpURL, to: finalURL)
+            try Self.atomicMove(from: tmpURL, to: resolvedFinalURL)
 
             let duration = Date().timeIntervalSince(runStart)
             items[idx].state = .done
             items[idx].progress = 1.0
             items[idx].duration = duration
-            items[idx].outputURL = finalURL
+            items[idx].outputURL = resolvedFinalURL
             items[idx].errorMessage = nil
             recordCompletion(duration: duration)
         } catch {
@@ -420,6 +428,42 @@ public final class BatchQueue: ObservableObject {
             try? fm.removeItem(at: dst)
         }
         try fm.moveItem(at: src, to: dst)
+    }
+
+    /// Swap the trailing `-adaptive` segment of `url`'s filename with
+    /// `-adaptive-<pickedTag>`. Used when `.adaptive` mode resolved to a
+    /// concrete sub-mode so the on-disk filename advertises the decision.
+    /// Resolves collisions by auto-incrementing — never overwrites an
+    /// existing file at the rewritten path.
+    static func swapAdaptiveTag(_ url: URL, with picked: SmartOutputMode) -> URL {
+        let dir = url.deletingLastPathComponent()
+        let ext = url.pathExtension
+        let stem = url.deletingPathExtension().lastPathComponent
+        let pickedTag = picked.filenameTag ?? "lossless"
+
+        var newStem: String
+        if let range = stem.range(of: "-adaptive") {
+            let after = stem[range.upperBound...]
+            newStem = String(stem[..<range.upperBound]) + "-\(pickedTag)" + String(after)
+        } else {
+            newStem = "\(stem)-\(pickedTag)"
+        }
+
+        let candidate = dir.appendingPathComponent(newStem).appendingPathExtension(ext)
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: candidate.path) {
+            return candidate
+        }
+        var counter = 2
+        while counter < 10_000 {
+            let alt = dir.appendingPathComponent("\(newStem)-\(counter)")
+                .appendingPathExtension(ext)
+            if !fm.fileExists(atPath: alt.path) {
+                return alt
+            }
+            counter += 1
+        }
+        return candidate
     }
 
     private func describe(_ error: Error) -> String {

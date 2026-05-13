@@ -13,6 +13,10 @@ public struct SettingsView: View {
 
     private let scaleOptions = [2, 3, 4]
 
+    /// Simple two-mode picker for the main Smart Output section. Anything
+    /// other than `.off` and `.adaptive` lives behind the advanced disclosure.
+    @State private var showAdvancedSmartOutput: Bool = false
+
     public init() {}
 
     public var body: some View {
@@ -63,16 +67,46 @@ public struct SettingsView: View {
             }
 
             Section("Smart Output (Sıkıştırma)") {
+                // Tek-toggle ana picker: Smart Auto / Kapalı.
+                // Diğer 6 mode advanced disclosure altında.
                 Picker("Mod", selection: $settings.smartOutputMode) {
+                    Text("Smart Auto").tag(SmartOutputMode.adaptive)
                     Text("Kapalı").tag(SmartOutputMode.off)
-                    Text("Otomatik (önerilen)").tag(SmartOutputMode.auto)
-                    Text("Her Zaman").tag(SmartOutputMode.always)
+                    // Advanced modlar açıkken aynı picker'da görünür kalır
+                    // (kullanıcı seçimi korumak için), kapalıyken gizli.
+                    if showAdvancedSmartOutput || isAdvancedMode(settings.smartOutputMode) {
+                        ForEach(SmartOutputMode.allCases.filter { $0 != .adaptive && $0 != .off }, id: \.self) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
 
-                Text(smartOutputHint)
+                Text(settings.smartOutputMode.hint)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if settings.smartOutputMode != .off {
+                    Text("Çıktı dosya adı: ...-upscaled-\(settings.smartOutputMode.filenameTag ?? "").png")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                }
+
+                DisclosureGroup("Gelişmiş ayarlar", isExpanded: $showAdvancedSmartOutput) {
+                    Text("Smart Auto seçilen sub-mode dosya adının sonuna eklenir (`adaptive-binarize`, `adaptive-lineart`, vb). Tek tek mode seçmek için aşağıdan seç.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.bottom, 4)
+
+                    Picker("Tek mod (debug)", selection: $settings.smartOutputMode) {
+                        ForEach(SmartOutputMode.allCases, id: \.self) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
             }
 
             Section("Hakkında") {
@@ -98,6 +132,10 @@ public struct SettingsView: View {
         "realesrgan-ncnn-vulkan v0.2.0"
     }
 
+    private func isAdvancedMode(_ mode: SmartOutputMode) -> Bool {
+        mode != .adaptive && mode != .off
+    }
+
     private var engineHint: String {
         switch settings.enginePreference {
         case "auto":
@@ -109,14 +147,4 @@ public struct SettingsView: View {
         }
     }
 
-    private var smartOutputHint: String {
-        switch settings.smartOutputMode {
-        case .off:
-            return "Sıkıştırma yok — motor ne yazdıysa o kalır."
-        case .auto:
-            return "Boyama kitabı, line art veya sınırlı palet içerik otomatik tespit edilip palet quantization + lossless optimizer ile küçültülür (B/W'de 5-20× azalma, near-lossless). Fotoğraflar dokunulmadan kalır."
-        case .always:
-            return "Tüm çıktılarda pngquant + oxipng uygulanır. Sürekli ton fotoğraflarda hafif kalite kaybı olabilir."
-        }
-    }
 }

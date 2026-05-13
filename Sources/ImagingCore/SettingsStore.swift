@@ -55,6 +55,6 @@ public final class SettingsStore {
         self.defaultTileSize = ud.integer(forKey: Keys.defaultTileSize) // 0 = auto, valid default
         self.smartOutputMode = SmartOutputMode(
             rawValue: ud.string(forKey: Keys.smartOutputMode) ?? ""
-        ) ?? .auto
+        ) ?? .adaptive
     }
 }
