@@ -28,14 +28,30 @@ public enum SmartOutputMode: String, Sendable, CaseIterable, Equatable {
 
     public var label: String {
         switch self {
-        case .off:       return "Kapalı (ham)"
-        case .adaptive:  return "Smart Auto (Akıllı Otomatik)"
-        case .auto:      return "Yüksek Kalite (Lossless)"
-        case .always:    return "Her Zaman Sıkıştır"
-        case .softLoss:  return "Yumuşak Kayıp"
-        case .colors32:  return "32 Renk Paleti"
-        case .colors8:   return "Line Art (8 Renk)"
-        case .binarize:  return "Saf B/W (2 Renk)"
+        case .off:       return "Kapalı (ham) — ×10"
+        case .adaptive:  return "Smart Auto (Akıllı Otomatik) — ×0.2–1"
+        case .auto:      return "Yüksek Kalite (Lossless) — ×3–4"
+        case .always:    return "Her Zaman Sıkıştır — ×3–4"
+        case .softLoss:  return "Yumuşak Kayıp — ×2"
+        case .colors32:  return "32 Renk Paleti — ×2"
+        case .colors8:   return "Line Art (8 Renk) — ×1"
+        case .binarize:  return "Saf B/W (2 Renk) — ×0.2"
+        }
+    }
+
+    /// Approximate size multiplier vs input file (B/W coloring book reference
+    /// content at 4× upscale, measured 2026-05-13 on 4 customer files).
+    /// Used in mode labels + hint text. Photo content multipliers may differ.
+    public var sizeMultiplierHint: String {
+        switch self {
+        case .off:       return "×10 (ham, en büyük)"
+        case .adaptive:  return "×0.2–1 (içeriğe göre)"
+        case .auto:      return "×3–4 (lossless)"
+        case .always:    return "×3–4 (force lossless)"
+        case .softLoss:  return "×2"
+        case .colors32:  return "×2"
+        case .colors8:   return "×1 (input civarı)"
+        case .binarize:  return "×0.2 (input'tan 5× küçük)"
         }
     }
 
@@ -66,23 +82,25 @@ public enum SmartOutputMode: String, Sendable, CaseIterable, Equatable {
     }
 
     public var hint: String {
+        // B/W coloring book referans içeriği (4× upscale sonrası).
+        // Photo / continuous tone içerik için multiplier'lar düşer.
         switch self {
         case .off:
-            return "Motor ham çıktısı (~20-25 MB B/W için). Sıkıştırma yok."
+            return "Motor ham çıktısı — sıkıştırma yok. ~×10 input boyutu (B/W, 4× upscale)."
         case .adaptive:
-            return "İçerik-bilinçli aggressive seçim — B/W için 0.5-2 MB, fotoğraf için lossless. Dosya adına seçilen yöntem yazılır."
+            return "İçerik-bilinçli aggressive seçim — ~×0.2–1 input boyutu. Dosya adına seçilen yöntem yazılır."
         case .auto:
-            return "İçerik-bilinçli near-lossless: B/W ve sınırlı palet quantize edilir; fotoğraf lossless korunur. ~7-9 MB B/W için."
+            return "Near-lossless: B/W ve sınırlı palet quantize, fotoğraf lossless. ~×3–4 input boyutu."
         case .always:
-            return "Her zaman pngquant + oxipng. ~7-9 MB B/W için. Fotoğraf hafif palet bandı görebilir."
+            return "Her zaman pngquant + oxipng. ~×3–4 input boyutu. Fotoğraf hafif palet bandı görebilir."
         case .softLoss:
-            return "Quality 40-90 — minimal görsel kayıp, ~4 MB. Email upload için."
+            return "Quality 40–90 — minimal görsel kayıp. ~×2 input boyutu. Email upload için."
         case .colors32:
-            return "32 renk paleti — cartoon/coloring book friendly, ~4 MB. Hafif palet bandı."
+            return "32 renk paleti — cartoon/coloring book friendly. ~×2 input boyutu. Hafif palet bandı."
         case .colors8:
-            return "8 renk paleti — line art için, ~2 MB. Görünür posterization."
+            return "8 renk paleti — line art için ideal. ~×1 input boyutu (4× çözünürlük artışı + ~aynı dosya boyutu)."
         case .binarize:
-            return "Saf siyah-beyaz (2 renk) — anti-aliasing yok, jagged edges, ~0.5 MB. Maksimum sıkıştırma."
+            return "Saf siyah-beyaz (2 renk) — anti-aliasing yok, jagged edges. ~×0.2 input (4× çözünürlük + 5× küçük dosya)."
         }
     }
 }
