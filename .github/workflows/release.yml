@@ -309,6 +309,17 @@ jobs:
             echo "::error::release/ is empty — artifact download failed"
             exit 1
           fi
+          # "Latest" pointer for stable download URL — version-agnostic
+          # filename so apps.softwareasan.ai/genesis-imaging/latest.dmg
+          # (Caddy redirect → GitHub /releases/latest/download/<file>) always
+          # resolves to the current release.
+          VERSIONED_DMG="release/genesis-imaging-${GITHUB_REF_NAME}-darwin-arm64.dmg"
+          if [ -f "$VERSIONED_DMG" ]; then
+            cp "$VERSIONED_DMG" release/genesis-imaging-darwin-arm64.dmg
+            echo "✅ Latest pointer DMG created: genesis-imaging-darwin-arm64.dmg"
+          else
+            echo "::warning::Versioned DMG missing; skipping latest pointer"
+          fi
           cd release && shasum -a 256 * > checksums.txt
 
       - name: Generate release notes
