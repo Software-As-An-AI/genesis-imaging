@@ -48,6 +48,9 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: ./scripts/stamp-version.sh
 
+      - name: Test (defense-in-depth — independent of ci.yml status)
+        run: swift test
+
       - name: Build executable (release)
         run: |
           swift build -c release
