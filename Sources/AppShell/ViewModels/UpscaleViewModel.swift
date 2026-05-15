@@ -124,11 +124,18 @@ public final class UpscaleViewModel {
                     // Post-process: palette-aware compression. Engine succeeded —
                     // any failure here is non-fatal (engine's output is on disk).
                     let smartMode = SettingsStore.shared.smartOutputMode
+                    let despeckleEnabled = SettingsStore.shared.despeckleEnabled
+                    let despecklePreset = DespecklePreset.from(
+                        rawValue: SettingsStore.shared.despecklePreset
+                    )
                     var finalOutputURL = result.outputURL
                     if smartMode != .off {
                         do {
                             let pr = try SmartOutputProcessor().process(
-                                url: result.outputURL, mode: smartMode
+                                url: result.outputURL,
+                                mode: smartMode,
+                                despeckleEnabled: despeckleEnabled,
+                                despecklePreset: despecklePreset
                             )
                             // When .adaptive picked a concrete sub-mode, rewrite
                             // the filename to advertise it: `-upscaled-adaptive`

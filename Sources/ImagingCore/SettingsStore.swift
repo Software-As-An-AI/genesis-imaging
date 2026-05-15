@@ -36,12 +36,29 @@ public final class SettingsStore {
         didSet { UserDefaults.standard.set(smartOutputMode.rawValue, forKey: Keys.smartOutputMode) }
     }
 
+    /// Phase 3 (v0.3.3.0): opt-in automatic speckle/artifact cleanup for B/W
+    /// line art outputs. Triggered after Smart Output content classification
+    /// when `picked ∈ {.binarize, .colors8}` AND `fingerprint.nearBinaryScore
+    /// >= 0.85`. See `DespeckleFilter` + `SmartOutputProcessor`.
+    public var despeckleEnabled: Bool {
+        didSet { UserDefaults.standard.set(despeckleEnabled, forKey: Keys.despeckleEnabled) }
+    }
+
+    /// Aggressiveness preset for `DespeckleFilter`. Stored as raw string
+    /// (`@AppStorage` enum support is awkward); resolve via
+    /// `DespecklePreset.from(rawValue:)`.
+    public var despecklePreset: String {
+        didSet { UserDefaults.standard.set(despecklePreset, forKey: Keys.despecklePreset) }
+    }
+
     private enum Keys {
         static let enginePreference = "engine.preference"
         static let defaultModel = "engine.defaultModel"
         static let defaultScale = "engine.defaultScale"
         static let defaultTileSize = "engine.defaultTileSize"
         static let smartOutputMode = "output.smartOutputMode"
+        static let despeckleEnabled = "output.despeckleEnabled"
+        static let despecklePreset = "output.despecklePreset"
     }
 
     /// Public initializer — primarily for `.shared`. A custom `UserDefaults`
@@ -56,5 +73,14 @@ public final class SettingsStore {
         self.smartOutputMode = SmartOutputMode(
             rawValue: ud.string(forKey: Keys.smartOutputMode) ?? ""
         ) ?? .adaptive
+        // Despeckle defaults: enabled + normal preset (operator-canonical
+        // aggressive default doctrine, consistent with Smart Output Adaptive).
+        // ud.object(forKey:) check to differentiate "never set" from "false".
+        if ud.object(forKey: Keys.despeckleEnabled) != nil {
+            self.despeckleEnabled = ud.bool(forKey: Keys.despeckleEnabled)
+        } else {
+            self.despeckleEnabled = true
+        }
+        self.despecklePreset = ud.string(forKey: Keys.despecklePreset) ?? "normal"
     }
 }

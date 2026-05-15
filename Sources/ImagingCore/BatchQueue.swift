@@ -347,10 +347,19 @@ public final class BatchQueue: ObservableObject {
             // move. Engine already succeeded — if smart output throws, log and
             // proceed with the un-optimized tmp file (engine's work is intact).
             let smartMode = SettingsStore.shared.smartOutputMode
+            let despeckleEnabled = SettingsStore.shared.despeckleEnabled
+            let despecklePreset = DespecklePreset.from(
+                rawValue: SettingsStore.shared.despecklePreset
+            )
             var resolvedFinalURL = finalURL
             if smartMode != .off {
                 do {
-                    let pr = try SmartOutputProcessor().process(url: tmpURL, mode: smartMode)
+                    let pr = try SmartOutputProcessor().process(
+                        url: tmpURL,
+                        mode: smartMode,
+                        despeckleEnabled: despeckleEnabled,
+                        despecklePreset: despecklePreset
+                    )
                     // When .adaptive picked a concrete sub-mode, swap the
                     // base finalURL filename tag from `adaptive` to
                     // `adaptive-<picked>` so the on-disk name advertises

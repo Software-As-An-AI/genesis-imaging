@@ -238,6 +238,8 @@ public struct BatchQueueView: View {
                     .help("Klasör seçimini temizle (aynı dizine yaz)")
                 }
             }
+
+            DespeckleControlRow()
         }
     }
 

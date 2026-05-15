@@ -73,7 +73,52 @@ public struct SmartOutputProcessor: Sendable {
 
     public static let sizeDeltaThreshold: Double = 0.90
 
-    public func process(url: URL, mode: SmartOutputMode) throws -> ProcessResult {
+    /// Phase 3 trigger predicate: should `DespeckleFilter` run for this
+    /// invocation? Pure function exposed `internal` for unit testing.
+    ///
+    /// Rules:
+    /// - `.binarize` / `.colors8` direct mode → yes (operator opt-in B/W path)
+    /// - `.adaptive` with picked ∈ {.binarize, .colors8} → yes (auto-routed B/W)
+    /// - `.adaptive` with picked = anything else → yes ONLY if
+    ///   `fingerprint.nearBinaryScore >= 0.85` (defensive — picker uncertain
+    ///   on edge content)
+    /// - Other modes (`.auto`, `.softLoss`, `.colors32`, `.always`, `.off`) → no
+    static func shouldDespeckle(
+        mode: SmartOutputMode,
+        adaptivePicked: SmartOutputMode?,
+        fingerprint: ContentFingerprint?
+    ) -> Bool {
+        let bwTargets: Set<SmartOutputMode> = [.binarize, .colors8]
+        if bwTargets.contains(mode) { return true }
+        if mode == .adaptive {
+            if let picked = adaptivePicked, bwTargets.contains(picked) {
+                return true
+            }
+            if let fp = fingerprint, fp.nearBinaryScore >= 0.85 {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Process a PNG output through Smart Output pipeline.
+    ///
+    /// - Parameters:
+    ///   - url: Input PNG path. Replaced in-place with optimized version
+    ///     unless size-delta guard fires.
+    ///   - mode: Smart Output mode (Adaptive picks sub-mode internally).
+    ///   - despeckleEnabled: Phase 3 — opt-in CCA artifact cleanup before
+    ///     pngquant. Only active when content is B/W (binarize/colors8 path
+    ///     or nearBinaryScore >= 0.85). Default `false` for backwards-compat
+    ///     with tests; callers should pass `SettingsStore.shared.despeckleEnabled`.
+    ///   - despecklePreset: Aggressiveness preset. Ignored when
+    ///     `despeckleEnabled == false`.
+    public func process(
+        url: URL,
+        mode: SmartOutputMode,
+        despeckleEnabled: Bool = false,
+        despecklePreset: DespecklePreset = .normal
+    ) throws -> ProcessResult {
         let originalBytes = fileSize(at: url)
 
         if mode == .off {
@@ -157,6 +202,24 @@ public struct SmartOutputProcessor: Sendable {
 
         case .binarize:
             pngquantArgs = ["--speed", "1", "2"]
+        }
+
+        // Phase 3 (v0.3.3.0): despeckle pre-stage. Applied in-place on `url`
+        // before pngquant runs. Triggered when:
+        //   1. `despeckleEnabled == true` (caller opt-in)
+        //   2. Content is B/W line art — either explicit mode (.binarize /
+        //      .colors8) OR adaptive picked one of those, OR fingerprint
+        //      nearBinaryScore >= 0.85 (defensive lower bound)
+        // Photo content (auto / softLoss / colors32) is bypassed even with
+        // the flag on — high-color despeckle would damage pixel details.
+        if despeckleEnabled && Self.shouldDespeckle(
+            mode: mode,
+            adaptivePicked: adaptivePicked,
+            fingerprint: fingerprint
+        ) {
+            // Best-effort: failure is non-fatal, fall through to pngquant.
+            // DespeckleFilter writes back to the same URL (in-place).
+            try? DespeckleFilter.apply(url: url, preset: despecklePreset)
         }
 
         // Stage tmp.

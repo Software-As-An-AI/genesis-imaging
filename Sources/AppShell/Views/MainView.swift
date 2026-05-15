@@ -154,24 +154,28 @@ public struct MainView: View {
     }
 
     private var controls: some View {
-        HStack(spacing: 12) {
-            Picker("Model", selection: $viewModel.modelName) {
-                ForEach(supportedModels, id: \.self) { name in
-                    Text(name).tag(name)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Picker("Model", selection: $viewModel.modelName) {
+                    ForEach(supportedModels, id: \.self) { name in
+                        Text(name).tag(name)
+                    }
                 }
-            }
-            .frame(maxWidth: 260)
+                .frame(maxWidth: 260)
 
-            Picker("Scale", selection: $viewModel.scale) {
-                ForEach([2, 3, 4], id: \.self) { factor in
-                    Text("x\(factor)").tag(factor)
+                Picker("Scale", selection: $viewModel.scale) {
+                    ForEach([2, 3, 4], id: \.self) { factor in
+                        Text("x\(factor)").tag(factor)
+                    }
                 }
+                .frame(maxWidth: 120)
+
+                Spacer()
+
+                actionButton
             }
-            .frame(maxWidth: 120)
 
-            Spacer()
-
-            actionButton
+            DespeckleControlRow()
         }
     }
 
