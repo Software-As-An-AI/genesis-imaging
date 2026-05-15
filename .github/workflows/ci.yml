@@ -40,6 +40,11 @@ jobs:
       - name: Fetch Smart Output binaries (pngquant + oxipng)
         run: ./scripts/fetch-smart-output-binaries.sh
 
+      - name: Stamp VersionStamp.swift (dev kind, CI provenance)
+        env:
+          BUILD_KIND: dev
+        run: ./scripts/stamp-version.sh
+
       - name: Build (debug)
         run: swift build
 
