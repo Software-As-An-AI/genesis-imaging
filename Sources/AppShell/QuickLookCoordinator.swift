@@ -9,7 +9,14 @@ import Foundation
 /// Singleton because `QLPreviewPanel.shared()` is process-global; multiple
 /// rows trying to drive it independently would race. The coordinator holds
 /// the current URL and acts as both data source + delegate.
-@MainActor
+///
+/// Not marked `@MainActor` on the class itself because the `QLPreviewPanel`
+/// data-source/delegate callbacks come in on the main thread already
+/// (AppKit invariant) but the protocol declarations are nonisolated. Mixing
+/// `@MainActor` on the class with these protocols requires Swift 6 syntax
+/// (`@preconcurrency`) which the CI toolchain (Swift 5.10) does not parse.
+/// All public mutation goes through `preview(_:)` which is called from
+/// `@MainActor` SwiftUI button actions, so single-threaded access holds.
 public final class QuickLookCoordinator: NSObject {
     public static let shared = QuickLookCoordinator()
 
@@ -41,7 +48,7 @@ public final class QuickLookCoordinator: NSObject {
 
 // MARK: - QLPreviewPanelDataSource
 
-extension QuickLookCoordinator: @preconcurrency QLPreviewPanelDataSource {
+extension QuickLookCoordinator: QLPreviewPanelDataSource {
     public func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
         currentURL == nil ? 0 : 1
     }
