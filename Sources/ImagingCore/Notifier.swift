@@ -26,6 +26,15 @@ public actor Notifier {
         guard !authorizationRequested else { return }
         authorizationRequested = true
 
+        // UNUserNotificationCenter crashes with an uncaught NSException
+        // ("bundleProxyForCurrentProcess is nil") when invoked from a bare
+        // executable without a real `.app` bundle (e.g. `swift run`, dev-run.sh).
+        // Skip authorization entirely in that case — sound feedback still works.
+        guard Bundle.main.bundleIdentifier != nil else {
+            authorizationGranted = false
+            return
+        }
+
         do {
             authorizationGranted = try await UNUserNotificationCenter.current()
                 .requestAuthorization(options: [.alert, .sound])

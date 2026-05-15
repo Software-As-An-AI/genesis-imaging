@@ -5,6 +5,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+echo "[build] stamp version (release kind)"
+BUILD_KIND=release bash "$ROOT/scripts/stamp-version.sh"
+
 echo "[build] swift build -c release"
 swift build -c release
 

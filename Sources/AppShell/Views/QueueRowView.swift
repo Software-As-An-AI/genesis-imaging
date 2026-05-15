@@ -34,7 +34,7 @@ public struct QueueRowView: View {
 
     public var body: some View {
         HStack(spacing: 12) {
-            thumbnail
+            thumbnailButton
                 .frame(width: 64, height: 64)
                 .background(Color.secondary.opacity(0.1))
                 .cornerRadius(6)
@@ -67,12 +67,30 @@ public struct QueueRowView: View {
                     .help(message)
             }
 
+            if item.state == .done, let outURL = item.outputURL {
+                Button {
+                    NSWorkspace.shared.open(outURL)
+                } label: {
+                    Image(systemName: "eye")
+                }
+                .buttonStyle(.iconHover)
+                .help("Önizleme'de aç")
+
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([outURL])
+                } label: {
+                    Image(systemName: "folder")
+                }
+                .buttonStyle(.iconHover)
+                .help("Finder'da göster")
+            }
+
             Button {
                 openOverridePopoverID = item.id
             } label: {
                 Image(systemName: "gearshape")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.iconHover)
             .help("Bu dosya için model/ölçek ayarı")
             .popover(
                 isPresented: Binding(
@@ -95,7 +113,7 @@ public struct QueueRowView: View {
             } label: {
                 Image(systemName: "xmark.circle")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.iconHover)
             .help("Listeden çıkar")
             .disabled(queue.phase == .processing && item.state == .processing)
         }
@@ -103,6 +121,23 @@ public struct QueueRowView: View {
     }
 
     // MARK: - Subviews
+
+    /// Thumbnail wrapped in a borderless button. When the item is `.done`
+    /// and has a resolved `outputURL`, tapping triggers Quick Look on the
+    /// upscaled file (native macOS preview overlay, same as space-bar in
+    /// Finder). Otherwise the button is non-interactive so the row's natural
+    /// drag/hover still feels right.
+    @ViewBuilder
+    private var thumbnailButton: some View {
+        if item.state == .done, let outURL = item.outputURL {
+            HoverableThumbnail(outURL: outURL) {
+                thumbnail
+            }
+            .help("Önizleme (Quick Look)")
+        } else {
+            thumbnail
+        }
+    }
 
     /// Decoded `NSImage` from `thumbnailData` if present, else a placeholder
     /// glyph. Decoding is cheap (64×64) and happens per-render — Wave 3 may
@@ -147,6 +182,39 @@ public struct QueueRowView: View {
             Image(systemName: "minus.circle")
                 .foregroundStyle(.secondary)
                 .help("Atlandı")
+        }
+    }
+
+    /// Wraps the thumbnail in a hover-aware Button that highlights an accent
+    /// border + slight scale lift on mouse-over, signaling that clicking
+    /// will open Quick Look.
+    private struct HoverableThumbnail<Content: View>: View {
+        let outURL: URL
+        let content: () -> Content
+        @State private var isHovered = false
+
+        init(outURL: URL, @ViewBuilder content: @escaping () -> Content) {
+            self.outURL = outURL
+            self.content = content
+        }
+
+        var body: some View {
+            Button {
+                QuickLookCoordinator.shared.preview(outURL)
+            } label: {
+                content()
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(
+                                isHovered ? Color.accentColor : Color.clear,
+                                lineWidth: 2
+                            )
+                    )
+                    .scaleEffect(isHovered ? 1.03 : 1.0)
+                    .animation(.easeInOut(duration: 0.12), value: isHovered)
+            }
+            .buttonStyle(.plain)
+            .onHover { isHovered = $0 }
         }
     }
 

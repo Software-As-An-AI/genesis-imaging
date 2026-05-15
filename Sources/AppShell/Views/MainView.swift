@@ -246,25 +246,26 @@ public struct MainView: View {
     }
 
     private var footer: some View {
-        HStack {
+        HStack(spacing: 8) {
             Text("Engine: \(viewModel.engineName)")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
             Spacer()
-            Text("Genesis Imaging \(Self.appVersion) — Faz 1+2")
+            if !VersionStamp.isRelease {
+                Text("DEV")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Color.yellow)
+                    .cornerRadius(3)
+                    .help("Lokal dev build — \(VersionStamp.summary)")
+            }
+            Text(VersionStamp.summary)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+                .help("Build provenance — \(VersionStamp.buildDate)")
         }
-    }
-
-    /// Reads CFBundleShortVersionString from Info.plist at runtime.
-    /// Returns "(dev)" if no Info.plist (e.g. `swift run` without bundle).
-    private static var appVersion: String {
-        if let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
-           !v.isEmpty {
-            return "v\(v)"
-        }
-        return "(dev)"
     }
 
     // MARK: - Helpers

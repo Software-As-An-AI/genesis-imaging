@@ -42,6 +42,12 @@ jobs:
       - name: Fetch Core ML model + compile to .mlmodelc
         run: ./scripts/fetch-coreml-model.sh
 
+      - name: Stamp VersionStamp.swift (release kind)
+        env:
+          BUILD_KIND: release
+          VERSION: ${{ github.ref_name }}
+        run: ./scripts/stamp-version.sh
+
       - name: Build executable (release)
         run: |
           swift build -c release
