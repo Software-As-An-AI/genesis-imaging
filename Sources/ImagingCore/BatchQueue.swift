@@ -365,7 +365,17 @@ public final class BatchQueue: ObservableObject {
                     // `adaptive-<picked>` so the on-disk name advertises
                     // the decision.
                     if smartMode == .adaptive, let picked = pr.adaptivePicked {
-                        resolvedFinalURL = Self.swapAdaptiveTag(finalURL, with: picked)
+                        resolvedFinalURL = Self.swapAdaptiveTag(
+                            finalURL,
+                            with: picked,
+                            despecklePreset: pr.appliedDespecklePreset
+                        )
+                    } else if let preset = pr.appliedDespecklePreset {
+                        // Manuel B/W mode (binarize/colors8) + despeckle aktif —
+                        // filename suffix ekle ki 3-preset karşılaştırması collide etmesin.
+                        resolvedFinalURL = Self.appendDespeckleSuffix(
+                            finalURL, preset: preset
+                        )
                     }
                 } catch {
                     FileHandle.standardError.write(Data(
@@ -445,23 +455,55 @@ public final class BatchQueue: ObservableObject {
         QuarantineUtil.stripQuarantine(at: dst)
     }
 
+    /// Append `-clean-<preset>` to a non-adaptive filename so 3-preset
+    /// A/B comparisons get distinct names (no auto-increment collision).
+    /// Used when manual `.binarize`/`.colors8` mode + despeckle applied.
+    static func appendDespeckleSuffix(_ url: URL, preset: DespecklePreset) -> URL {
+        let dir = url.deletingLastPathComponent()
+        let ext = url.pathExtension
+        let stem = url.deletingPathExtension().lastPathComponent
+        // Defensive: if the filename already carries -clean-<preset> (re-run
+        // case), don't double-stack.
+        if stem.contains("-clean-\(preset.rawValue)") { return url }
+        let newStem = "\(stem)-clean-\(preset.rawValue)"
+        let candidate = dir.appendingPathComponent(newStem).appendingPathExtension(ext)
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: candidate.path) { return candidate }
+        var counter = 2
+        while counter < 10_000 {
+            let c = dir.appendingPathComponent("\(newStem)-\(counter)").appendingPathExtension(ext)
+            if !fm.fileExists(atPath: c.path) { return c }
+            counter += 1
+        }
+        return candidate
+    }
+
     /// Swap the trailing `-adaptive` segment of `url`'s filename with
-    /// `-adaptive-<pickedTag>`. Used when `.adaptive` mode resolved to a
-    /// concrete sub-mode so the on-disk filename advertises the decision.
+    /// `-adaptive-<pickedTag>` and optionally append `-clean-<preset>` when
+    /// despeckle ran. Used when `.adaptive` mode resolved to a concrete
+    /// sub-mode so the on-disk filename advertises both the routing decision
+    /// AND the applied cleanup preset (so 3-preset A/B comparisons don't
+    /// collide via auto-increment).
+    ///
     /// Resolves collisions by auto-incrementing — never overwrites an
     /// existing file at the rewritten path.
-    static func swapAdaptiveTag(_ url: URL, with picked: SmartOutputMode) -> URL {
+    static func swapAdaptiveTag(
+        _ url: URL,
+        with picked: SmartOutputMode,
+        despecklePreset: DespecklePreset? = nil
+    ) -> URL {
         let dir = url.deletingLastPathComponent()
         let ext = url.pathExtension
         let stem = url.deletingPathExtension().lastPathComponent
         let pickedTag = picked.filenameTag ?? "lossless"
+        let cleanSuffix = despecklePreset.map { "-clean-\($0.rawValue)" } ?? ""
 
         var newStem: String
         if let range = stem.range(of: "-adaptive") {
             let after = stem[range.upperBound...]
-            newStem = String(stem[..<range.upperBound]) + "-\(pickedTag)" + String(after)
+            newStem = String(stem[..<range.upperBound]) + "-\(pickedTag)" + cleanSuffix + String(after)
         } else {
-            newStem = "\(stem)-\(pickedTag)"
+            newStem = "\(stem)-\(pickedTag)\(cleanSuffix)"
         }
 
         let candidate = dir.appendingPathComponent(newStem).appendingPathExtension(ext)

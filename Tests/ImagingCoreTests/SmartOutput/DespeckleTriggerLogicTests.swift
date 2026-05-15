@@ -24,8 +24,10 @@ final class DespeckleTriggerLogicTests: XCTestCase {
         ))
     }
 
-    func testDirectColors8Mode_triggersDespeckle() {
-        XCTAssertTrue(SmartOutputProcessor.shouldDespeckle(
+    func testDirectColors8Mode_skipsDespeckle_v0331() {
+        // v0.3.3.1: colors8/lineart preserves anti-aliasing — despeckle
+        // here destroys character detail. Excluded from triggers.
+        XCTAssertFalse(SmartOutputProcessor.shouldDespeckle(
             mode: .colors8, adaptivePicked: nil, fingerprint: nil
         ))
     }
@@ -57,19 +59,29 @@ final class DespeckleTriggerLogicTests: XCTestCase {
         ))
     }
 
-    func testAdaptive_pickedColors8_triggers() {
-        XCTAssertTrue(SmartOutputProcessor.shouldDespeckle(
+    func testAdaptive_pickedColors8_skips_v0331() {
+        // v0.3.3.1: even adaptive picker route via colors8 = no despeckle
+        // (preserves anti-aliasing path)
+        XCTAssertFalse(SmartOutputProcessor.shouldDespeckle(
             mode: .adaptive, adaptivePicked: .colors8,
             fingerprint: mockFingerprint(nearBinary: 0.92)
         ))
     }
 
-    func testAdaptive_pickedSoftLoss_butNearBinaryHigh_triggers() {
-        // Edge case: classifier picked softLoss but content is actually
-        // near-binary. Defensive trigger kicks in.
-        XCTAssertTrue(SmartOutputProcessor.shouldDespeckle(
+    func testAdaptive_pickedSoftLoss_evenNearBinary09_skips_v0331() {
+        // v0.3.3.1: defensive threshold raised 0.85 → 0.95. nearBinary=0.90
+        // no longer triggers — only very high confidence binary content.
+        XCTAssertFalse(SmartOutputProcessor.shouldDespeckle(
             mode: .adaptive, adaptivePicked: .softLoss,
             fingerprint: mockFingerprint(nearBinary: 0.90)
+        ))
+    }
+
+    func testAdaptive_pickedSoftLoss_veryHighNearBinary_stillTriggers() {
+        // 0.95+ defensive trigger still kicks in for misclassified B/W
+        XCTAssertTrue(SmartOutputProcessor.shouldDespeckle(
+            mode: .adaptive, adaptivePicked: .softLoss,
+            fingerprint: mockFingerprint(nearBinary: 0.97)
         ))
     }
 

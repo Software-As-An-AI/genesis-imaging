@@ -37,6 +37,11 @@ public struct SmartOutputProcessor: Sendable {
         public let adaptivePicked: SmartOutputMode?
         /// Full fingerprint computed in `.adaptive` mode (or `nil` for other modes).
         public let fingerprint: ContentFingerprint?
+        /// Phase 3 (v0.3.3.0): preset that actually ran (if despeckle fired
+        /// for this invocation). `nil` when despeckle was disabled, skipped
+        /// by content guard, or failed silently. Used by callers to compose
+        /// the on-disk filename so 3-preset A/B comparisons don't collide.
+        public let appliedDespecklePreset: DespecklePreset?
 
         public var sizeRatio: Double {
             guard originalBytes > 0 else { return 1.0 }
@@ -51,7 +56,8 @@ public struct SmartOutputProcessor: Sendable {
             skipReason: String?,
             analysis: ContentDetector.Analysis?,
             adaptivePicked: SmartOutputMode? = nil,
-            fingerprint: ContentFingerprint? = nil
+            fingerprint: ContentFingerprint? = nil,
+            appliedDespecklePreset: DespecklePreset? = nil
         ) {
             self.originalBytes = originalBytes
             self.finalBytes = finalBytes
@@ -61,6 +67,7 @@ public struct SmartOutputProcessor: Sendable {
             self.analysis = analysis
             self.adaptivePicked = adaptivePicked
             self.fingerprint = fingerprint
+            self.appliedDespecklePreset = appliedDespecklePreset
         }
     }
 
@@ -76,25 +83,28 @@ public struct SmartOutputProcessor: Sendable {
     /// Phase 3 trigger predicate: should `DespeckleFilter` run for this
     /// invocation? Pure function exposed `internal` for unit testing.
     ///
-    /// Rules:
-    /// - `.binarize` / `.colors8` direct mode → yes (operator opt-in B/W path)
-    /// - `.adaptive` with picked ∈ {.binarize, .colors8} → yes (auto-routed B/W)
-    /// - `.adaptive` with picked = anything else → yes ONLY if
-    ///   `fingerprint.nearBinaryScore >= 0.85` (defensive — picker uncertain
-    ///   on edge content)
+    /// Rules (v0.3.3.1 refined):
+    /// - `.binarize` direct mode → yes (pure 2-color hard B/W, anti-alias
+    ///   already stripped, despeckle isolates artifacts cleanly)
+    /// - `.adaptive` with picked == `.binarize` → yes (auto-routed B/W path)
+    /// - `.adaptive` with picked = something else AND
+    ///   `fingerprint.nearBinaryScore >= 0.95` → yes (defensive — only
+    ///   high-confidence binarish content)
+    /// - `.colors8` (lineart, 8-color anti-aliased) → **NO** in v0.3.3.1.
+    ///   pngquant's anti-aliasing preserve naturally smooths small artifacts;
+    ///   running despeckle here destroys character detail without benefit.
     /// - Other modes (`.auto`, `.softLoss`, `.colors32`, `.always`, `.off`) → no
     static func shouldDespeckle(
         mode: SmartOutputMode,
         adaptivePicked: SmartOutputMode?,
         fingerprint: ContentFingerprint?
     ) -> Bool {
-        let bwTargets: Set<SmartOutputMode> = [.binarize, .colors8]
-        if bwTargets.contains(mode) { return true }
+        // Only pure-binarize benefits — colors8/lineart preserves anti-aliasing
+        // naturally and shouldn't be touched by CCA cleanup.
+        if mode == .binarize { return true }
         if mode == .adaptive {
-            if let picked = adaptivePicked, bwTargets.contains(picked) {
-                return true
-            }
-            if let fp = fingerprint, fp.nearBinaryScore >= 0.85 {
+            if adaptivePicked == .binarize { return true }
+            if let fp = fingerprint, fp.nearBinaryScore >= 0.95 {
                 return true
             }
         }
@@ -212,6 +222,7 @@ public struct SmartOutputProcessor: Sendable {
         //      nearBinaryScore >= 0.85 (defensive lower bound)
         // Photo content (auto / softLoss / colors32) is bypassed even with
         // the flag on — high-color despeckle would damage pixel details.
+        var appliedDespecklePreset: DespecklePreset? = nil
         if despeckleEnabled && Self.shouldDespeckle(
             mode: mode,
             adaptivePicked: adaptivePicked,
@@ -219,7 +230,14 @@ public struct SmartOutputProcessor: Sendable {
         ) {
             // Best-effort: failure is non-fatal, fall through to pngquant.
             // DespeckleFilter writes back to the same URL (in-place).
-            try? DespeckleFilter.apply(url: url, preset: despecklePreset)
+            do {
+                try DespeckleFilter.apply(url: url, preset: despecklePreset)
+                appliedDespecklePreset = despecklePreset
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "[despeckle] non-fatal failure: \(error)\n".utf8
+                ))
+            }
         }
 
         // Stage tmp.
@@ -260,7 +278,8 @@ public struct SmartOutputProcessor: Sendable {
                 originalBytes: originalBytes, finalBytes: originalBytes,
                 wasQuantized: wasQuantized, wasOptimized: true,
                 skipReason: "delta-guard", analysis: analysis,
-                adaptivePicked: adaptivePicked, fingerprint: fingerprint
+                adaptivePicked: adaptivePicked, fingerprint: fingerprint,
+                appliedDespecklePreset: appliedDespecklePreset
             )
         }
 
@@ -269,7 +288,8 @@ public struct SmartOutputProcessor: Sendable {
             originalBytes: originalBytes, finalBytes: candidateBytes,
             wasQuantized: wasQuantized, wasOptimized: true,
             skipReason: nil, analysis: analysis,
-            adaptivePicked: adaptivePicked, fingerprint: fingerprint
+            adaptivePicked: adaptivePicked, fingerprint: fingerprint,
+            appliedDespecklePreset: appliedDespecklePreset
         )
     }
 

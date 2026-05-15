@@ -20,29 +20,36 @@ public enum DespecklePreset: String, CaseIterable, Codable, Sendable {
 
     /// Max connected-component area (in pixels²) classified as "noise".
     /// Components strictly larger than this threshold are preserved.
+    ///
+    /// Threshold history (empirical refinement):
+    /// - v0.3.3.0 baseline: 10 / 30 / 100 — destroyed character details
+    ///   (mouth ~20px area) on customer Comic_man11 batch (2026-05-15 Nadezhda
+    ///   report). See `DespeckleCharacterDetailTests` for reproduction.
+    /// - v0.3.3.1 tuned: 3 / 8 / 18 — preserves features ≥ 20px while still
+    ///   clearing 1-5px ncnn upscale artifacts. Customer empirical baseline.
     public var maxBlobArea: Int {
         switch self {
-        case .soft:   return 10
-        case .normal: return 30
-        case .strong: return 100
+        case .soft:   return 3
+        case .normal: return 8
+        case .strong: return 18
         }
     }
 
     /// Localized label for UI picker.
     public var label: String {
         switch self {
-        case .soft:   return "Yumuşak — küçük artifact (1-10 px)"
-        case .normal: return "Normal — orta artifact (5-30 px)"
-        case .strong: return "Agresif — büyük leke (10-100 px)"
+        case .soft:   return "Yumuşak — sadece çok ince dust (1-2 px)"
+        case .normal: return "Normal — küçük artifact (3-7 px)"
+        case .strong: return "Agresif — orta leke (8-17 px)"
         }
     }
 
     /// Hint line shown under the picker.
     public var hint: String {
         switch self {
-        case .soft:   return "Sadece çok küçük artifact'lar (1-10 pixel)"
-        case .normal: return "Küçük siyah leke/noktayı temizler (5-30 pixel)"
-        case .strong: return "Daha büyük leke + bant (10-100 pixel)"
+        case .soft:   return "Sadece tek-pixel dust temizler, karakter detayı korunur"
+        case .normal: return "3-7 pixel artifact (ncnn upscale residue) temizler"
+        case .strong: return "Daha büyük leke (8-17 pixel) — küçük detaylar risk altında"
         }
     }
 

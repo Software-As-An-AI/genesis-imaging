@@ -142,7 +142,16 @@ public final class UpscaleViewModel {
                             // → `-upscaled-adaptive-<picked>`.
                             if smartMode == .adaptive, let picked = pr.adaptivePicked {
                                 if let renamed = Self.renameWithAdaptivePicked(
-                                    url: result.outputURL, picked: picked
+                                    url: result.outputURL,
+                                    picked: picked,
+                                    despecklePreset: pr.appliedDespecklePreset
+                                ) {
+                                    finalOutputURL = renamed
+                                }
+                            } else if let preset = pr.appliedDespecklePreset {
+                                // Manuel B/W mode + despeckle: filename'a suffix ekle.
+                                if let renamed = Self.appendDespeckleSuffix(
+                                    url: result.outputURL, preset: preset
                                 ) {
                                     finalOutputURL = renamed
                                 }
@@ -212,28 +221,47 @@ public final class UpscaleViewModel {
         }
     }
 
-    /// Rename a file that ends in `-upscaled-adaptive.png` (or `-adaptive-<n>.png`)
-    /// to inject the picked sub-mode tag: `-upscaled-adaptive-<picked>.png`.
+    /// Append `-clean-<preset>` to a non-adaptive filename when despeckle
+    /// ran (manual `.binarize` / `.colors8` mode). Mirrors
+    /// `BatchQueue.appendDespeckleSuffix`. Returns new URL or nil on failure.
+    static func appendDespeckleSuffix(url: URL, preset: DespecklePreset) -> URL? {
+        let dir = url.deletingLastPathComponent()
+        let ext = url.pathExtension
+        let stem = url.deletingPathExtension().lastPathComponent
+        if stem.contains("-clean-\(preset.rawValue)") { return url }
+        let newStem = "\(stem)-clean-\(preset.rawValue)"
+        let newURL = dir.appendingPathComponent(newStem).appendingPathExtension(ext)
+        if FileManager.default.fileExists(atPath: newURL.path) { return nil }
+        do {
+            try FileManager.default.moveItem(at: url, to: newURL)
+            QuarantineUtil.stripQuarantine(at: newURL)
+            return newURL
+        } catch {
+            return nil
+        }
+    }
+
+    /// Rename a file that ends in `-upscaled-adaptive.png` to inject the
+    /// picked sub-mode tag (and optional despeckle preset suffix):
+    /// `-upscaled-adaptive-<picked>[-clean-<preset>].png`.
     /// Returns the new URL on success, or `nil` if rename failed.
-    static func renameWithAdaptivePicked(url: URL, picked: SmartOutputMode) -> URL? {
+    static func renameWithAdaptivePicked(
+        url: URL,
+        picked: SmartOutputMode,
+        despecklePreset: DespecklePreset? = nil
+    ) -> URL? {
         let dir = url.deletingLastPathComponent()
         let stem = url.deletingPathExtension().lastPathComponent
         let ext = url.pathExtension
         let pickedTag = picked.filenameTag ?? "lossless"
-        // Replace trailing `-adaptive` (with optional collision suffix) with
-        // `-adaptive-<picked>`.
-        // Examples:
-        //   foo-upscaled-adaptive          → foo-upscaled-adaptive-binarize
-        //   foo-upscaled-adaptive-1        → foo-upscaled-adaptive-binarize-1
-        //   foo-upscaled-x4-adaptive       → foo-upscaled-x4-adaptive-binarize
+        let cleanSuffix = despecklePreset.map { "-clean-\($0.rawValue)" } ?? ""
+
         var newStem = stem
         if let range = newStem.range(of: "-adaptive") {
-            let after = newStem[range.upperBound...]  // suffix after -adaptive
-            newStem = String(newStem[..<range.upperBound]) + "-\(pickedTag)" + String(after)
+            let after = newStem[range.upperBound...]
+            newStem = String(newStem[..<range.upperBound]) + "-\(pickedTag)" + cleanSuffix + String(after)
         } else {
-            // Defensive — current filename doesn't carry the adaptive tag.
-            // Just append the picked tag so we still convey traceability.
-            newStem = "\(stem)-\(pickedTag)"
+            newStem = "\(stem)-\(pickedTag)\(cleanSuffix)"
         }
 
         let newURL = dir.appendingPathComponent(newStem).appendingPathExtension(ext)
