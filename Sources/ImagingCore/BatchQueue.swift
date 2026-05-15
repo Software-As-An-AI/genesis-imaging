@@ -422,12 +422,18 @@ public final class BatchQueue: ObservableObject {
     /// Atomic same-volume move (rename(2) on macOS). Both ends must share the
     /// same parent directory — `processItem` constructs `tmpURL` as a
     /// neighbour of `finalURL` so this is always true.
+    ///
+    /// Side-effect: strips `com.apple.quarantine` xattr from the destination
+    /// after the move. Sandboxed/notarized apps inherit quarantine on every
+    /// write; this xattr blocks web upload pipelines (Canva, Drive web) for
+    /// customer-owned content. See `QuarantineUtil`.
     private static func atomicMove(from src: URL, to dst: URL) throws {
         let fm = FileManager.default
         if fm.fileExists(atPath: dst.path) {
             try? fm.removeItem(at: dst)
         }
         try fm.moveItem(at: src, to: dst)
+        QuarantineUtil.stripQuarantine(at: dst)
     }
 
     /// Swap the trailing `-adaptive` segment of `url`'s filename with

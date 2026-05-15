@@ -127,5 +127,10 @@ public enum OutputWriter {
                 underlying: error.localizedDescription
             )
         }
+
+        // Strip quarantine xattr — sandboxed/notarized apps inherit it on
+        // every write, which blocks web upload pipelines (Canva, Drive web).
+        // See QuarantineUtil for rationale.
+        QuarantineUtil.stripQuarantine(at: final)
     }
 }

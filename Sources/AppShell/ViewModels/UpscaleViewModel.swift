@@ -117,6 +117,10 @@ public final class UpscaleViewModel {
                     progress = max(0.0, min(1.0, pct / 100.0))
                 case .completed(let result):
                     progress = 1.0
+                    // Strip quarantine xattr the engine subprocess inherited
+                    // from the sandboxed parent — blocks web upload pipelines
+                    // (Canva, Drive) otherwise. See QuarantineUtil.
+                    QuarantineUtil.stripQuarantine(at: result.outputURL)
                     // Post-process: palette-aware compression. Engine succeeded —
                     // any failure here is non-fatal (engine's output is on disk).
                     let smartMode = SettingsStore.shared.smartOutputMode
@@ -235,6 +239,7 @@ public final class UpscaleViewModel {
                 return nil
             }
             try FileManager.default.moveItem(at: url, to: newURL)
+            QuarantineUtil.stripQuarantine(at: newURL)
             return newURL
         } catch {
             return nil
