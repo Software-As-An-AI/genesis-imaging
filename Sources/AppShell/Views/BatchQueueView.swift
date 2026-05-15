@@ -38,6 +38,12 @@ public struct BatchQueueView: View {
     @State private var showFileImporter: Bool = false
     @State private var showBatchOutputPicker: Bool = false
 
+    /// Pending re-upscale confirmation: when user picks files via the
+    /// importer and some look already upscaled (carry `-upscaled-` segment),
+    /// stash them here and surface a confirmDialog. Operator directive
+    /// 2026-05-15: re-upscale should be allowed, just opt-in.
+    @State private var pendingReUpscale: (fresh: [URL], alreadyUpscaled: [URL])? = nil
+
     public init(
         queue: BatchQueue,
         engineProvider: @escaping @Sendable () async throws -> any UpscaleEngine,
@@ -64,6 +70,8 @@ public struct BatchQueueView: View {
         VStack(spacing: 12) {
             header
 
+            cloudLocationBanner
+
             if !queue.preflightIssues.isEmpty {
                 PreflightIssuesView(queue: queue)
             }
@@ -89,7 +97,14 @@ public struct BatchQueueView: View {
             allowsMultipleSelection: true
         ) { result in
             if case let .success(urls) = result {
-                queue.add(urls: urls)
+                let parts = FilenameHeuristics.partition(urls)
+                if parts.alreadyUpscaled.isEmpty {
+                    queue.add(urls: urls)
+                } else {
+                    // Surface confirmation dialog. Fresh ones can go in
+                    // immediately so the user only confirms the duplicates.
+                    pendingReUpscale = parts
+                }
             }
         }
         .fileImporter(
@@ -99,6 +114,72 @@ public struct BatchQueueView: View {
         ) { result in
             if case let .success(urls) = result, let first = urls.first {
                 queue.batchOutputOverride = first
+            }
+        }
+        .confirmationDialog(
+            reUpscaleDialogTitle,
+            isPresented: Binding(
+                get: { pendingReUpscale != nil },
+                set: { if !$0 { pendingReUpscale = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingReUpscale
+        ) { parts in
+            Button("Hepsini ekle") {
+                queue.add(urls: parts.fresh + parts.alreadyUpscaled)
+                pendingReUpscale = nil
+            }
+            if !parts.fresh.isEmpty {
+                Button("Yalnız yeni dosyaları ekle (\(parts.fresh.count))") {
+                    queue.add(urls: parts.fresh)
+                    pendingReUpscale = nil
+                }
+            }
+            Button("Vazgeç", role: .cancel) {
+                pendingReUpscale = nil
+            }
+        } message: { parts in
+            Text("\(parts.alreadyUpscaled.count) dosya zaten daha önce upscale edilmiş gibi görünüyor (`-upscaled-` ile bitiyor). Yeniden upscale dosya adına ek bir suffix bindirir.")
+        }
+    }
+
+    private var reUpscaleDialogTitle: String {
+        guard let parts = pendingReUpscale else { return "" }
+        return "\(parts.alreadyUpscaled.count) dosya zaten upscale edilmiş — yine eklensin mi?"
+    }
+
+    // MARK: - iCloud Drive warning banner
+
+    @ViewBuilder
+    private var cloudLocationBanner: some View {
+        let target = queue.batchOutputOverride
+            ?? queue.items.first?.sourceURL.deletingLastPathComponent()
+        if let dir = target {
+            let verdict = CloudLocationDetector.inspect(dir)
+            if verdict.isCloudSynced {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "exclamationmark.icloud")
+                        .foregroundStyle(.orange)
+                        .font(.title3)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Çıktı klasörü: \(verdict.displayName)")
+                            .font(.callout.weight(.semibold))
+                        Text(verdict.warningMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Button("Klasör seç") { showBatchOutputPicker = true }
+                        .buttonStyle(.bordered)
+                }
+                .padding(10)
+                .background(Color.orange.opacity(0.12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.orange.opacity(0.4), lineWidth: 1)
+                )
+                .cornerRadius(8)
             }
         }
     }

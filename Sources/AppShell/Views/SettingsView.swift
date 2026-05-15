@@ -13,10 +13,6 @@ public struct SettingsView: View {
 
     private let scaleOptions = [2, 3, 4]
 
-    /// Simple two-mode picker for the main Smart Output section. Anything
-    /// other than `.off` and `.adaptive` lives behind the advanced disclosure.
-    @State private var showAdvancedSmartOutput: Bool = false
-
     public init() {}
 
     public var body: some View {
@@ -67,17 +63,12 @@ public struct SettingsView: View {
             }
 
             Section("Smart Output (Sıkıştırma)") {
-                // Tek-toggle ana picker: Smart Auto / Kapalı.
-                // Diğer 6 mode advanced disclosure altında.
+                // Tek consolide picker — 8 mode tek menüde. Smart Auto
+                // default + en üstte. Hint + filename preview seçime göre
+                // dinamik güncellenir.
                 Picker("Mod", selection: $settings.smartOutputMode) {
-                    Text("Smart Auto").tag(SmartOutputMode.adaptive)
-                    Text("Kapalı").tag(SmartOutputMode.off)
-                    // Advanced modlar açıkken aynı picker'da görünür kalır
-                    // (kullanıcı seçimi korumak için), kapalıyken gizli.
-                    if showAdvancedSmartOutput || isAdvancedMode(settings.smartOutputMode) {
-                        ForEach(SmartOutputMode.allCases.filter { $0 != .adaptive && $0 != .off }, id: \.self) { mode in
-                            Text(mode.label).tag(mode)
-                        }
+                    ForEach(SmartOutputMode.allCases, id: \.self) { mode in
+                        Text(mode.label).tag(mode)
                     }
                 }
                 .pickerStyle(.menu)
@@ -93,19 +84,11 @@ public struct SettingsView: View {
                         .foregroundStyle(.tertiary)
                 }
 
-                DisclosureGroup("Gelişmiş ayarlar", isExpanded: $showAdvancedSmartOutput) {
-                    Text("Smart Auto seçilen sub-mode dosya adının sonuna eklenir (`adaptive-binarize`, `adaptive-lineart`, vb). Tek tek mode seçmek için aşağıdan seç.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                if settings.smartOutputMode == .adaptive {
+                    Text("Smart Auto içeriğe göre alt-mode seçer; dosya adının sonuna seçilen alt-mode eklenir (örn. `adaptive-binarize`, `adaptive-lineart`).")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.bottom, 4)
-
-                    Picker("Tek mod (debug)", selection: $settings.smartOutputMode) {
-                        ForEach(SmartOutputMode.allCases, id: \.self) { mode in
-                            Text(mode.label).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.menu)
                 }
             }
 
@@ -130,10 +113,6 @@ public struct SettingsView: View {
     private var ncnnBinaryVersion: String {
         // Faz 1 placeholder — real version surfaced via NcnnEngine.probe() in Faz 2 wire-up.
         "realesrgan-ncnn-vulkan v0.2.0"
-    }
-
-    private func isAdvancedMode(_ mode: SmartOutputMode) -> Bool {
-        mode != .adaptive && mode != .off
     }
 
     private var engineHint: String {
