@@ -36,6 +36,27 @@ struct EraserEditorView: View {
     /// interactive performance on 5K source images.
     @State private var proxyImage: NSImage? = nil
 
+    /// Zoom factor (multiplies the aspect-fit rect). 1.0 = fit-to-window.
+    /// Range clamped to [0.5, 8.0] — beyond 8× brush precision dominated
+    /// by source resolution, panning becomes the bottleneck.
+    @State private var zoom: CGFloat = 1.0
+
+    /// Pan offset in view-space points (translates the displayed rect).
+    @State private var pan: CGSize = .zero
+
+    /// Pan baseline captured at drag start (so successive drags accumulate).
+    @State private var panStart: CGSize = .zero
+
+    /// Tool mode: `.eraser` (drag erases), `.pan` (drag pans the canvas).
+    @State private var tool: Tool = .eraser
+
+    enum Tool: String, CaseIterable, Identifiable {
+        case eraser, pan
+        var id: String { rawValue }
+        var label: String { self == .eraser ? "Silgi" : "Kaydır" }
+        var icon: String { self == .eraser ? "eraser" : "hand.draw" }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             toolbar
@@ -66,38 +87,86 @@ struct EraserEditorView: View {
 
     private var toolbar: some View {
         HStack(spacing: 16) {
-            HStack(spacing: 8) {
-                Text("Brush")
-                    .font(.callout)
+            // Tool mode toggle (eraser vs pan)
+            Picker("", selection: $tool) {
+                ForEach(Tool.allCases) { t in
+                    Image(systemName: t.icon).tag(t)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 100)
+            .labelsHidden()
+            .help("Silgi (E) / Kaydır (H)")
+
+            // Brush size (only meaningful in eraser mode)
+            HStack(spacing: 6) {
+                Image(systemName: "circle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                 Slider(value: $session.brushDiameter, in: 10...400, step: 2)
-                    .frame(width: 200)
-                Text("\(Int(session.brushDiameter)) px")
+                    .frame(width: 140)
+                Text("\(Int(session.brushDiameter))")
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .frame(width: 60, alignment: .leading)
+                    .frame(width: 36, alignment: .trailing)
+                Text("px")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .opacity(tool == .eraser ? 1.0 : 0.5)
+
+            Divider().frame(height: 18)
+
+            // Zoom controls
+            HStack(spacing: 4) {
+                Button { zoomBy(0.8) } label: {
+                    Image(systemName: "minus.magnifyingglass")
+                }
+                .help("Uzaklaş (⌘−)")
+                .keyboardShortcut("-", modifiers: .command)
+
+                Text("\(Int(zoom * 100))%")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 42)
+
+                Button { zoomBy(1.25) } label: {
+                    Image(systemName: "plus.magnifyingglass")
+                }
+                .help("Yakınlaş (⌘+)")
+                .keyboardShortcut("=", modifiers: .command)
+
+                Button { resetView() } label: {
+                    Image(systemName: "arrow.up.left.and.down.right.magnifyingglass")
+                }
+                .help("Sığdır (⌘0)")
+                .keyboardShortcut("0", modifiers: .command)
             }
 
             Spacer()
 
+            // Undo/redo
             HStack(spacing: 4) {
                 Button {
                     undoManager?.undo()
                 } label: {
-                    Label("Geri al", systemImage: "arrow.uturn.backward")
+                    Image(systemName: "arrow.uturn.backward")
                 }
+                .help("Geri al (⌘Z)")
                 .disabled(undoManager?.canUndo != true)
                 .keyboardShortcut("z", modifiers: .command)
 
                 Button {
                     undoManager?.redo()
                 } label: {
-                    Label("Yinele", systemImage: "arrow.uturn.forward")
+                    Image(systemName: "arrow.uturn.forward")
                 }
+                .help("Yinele (⌘⇧Z)")
                 .disabled(undoManager?.canRedo != true)
                 .keyboardShortcut("z", modifiers: [.command, .shift])
             }
 
-            Spacer()
+            Divider().frame(height: 18)
 
             Button("İptal", role: .cancel) {
                 onCancel()
@@ -118,28 +187,55 @@ struct EraserEditorView: View {
         }
     }
 
+    // MARK: - Zoom helpers
+
+    private func zoomBy(_ factor: CGFloat) {
+        let next = (zoom * factor).clamped(to: 0.25...8.0)
+        zoom = next
+        if zoom == 1.0 { pan = .zero }
+    }
+
+    private func resetView() {
+        zoom = 1.0
+        pan = .zero
+    }
+
     // MARK: - Canvas
 
     private var canvasArea: some View {
         GeometryReader { geo in
-            let fitRect = aspectFitRect(
-                content: CGSize(width: session.imageWidth, height: session.imageHeight),
-                in: geo.size
-            )
+            let displayRect = currentDisplayRect(in: geo.size)
             Canvas { ctx, _ in
-                drawCanvas(ctx: ctx, fitRect: fitRect)
+                drawCanvas(ctx: ctx, fitRect: displayRect)
             }
             .contentShape(Rectangle())
-            .gesture(strokeGesture(fitRect: fitRect))
+            .gesture(combinedGesture(fitRect: displayRect))
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let p):
-                    hoverPoint = imageCoord(view: p, fitRect: fitRect)
+                    hoverPoint = imageCoord(view: p, fitRect: displayRect)
                 case .ended:
                     hoverPoint = nil
                 }
             }
         }
+    }
+
+    /// Current display rect = aspect-fit × zoom + pan offset. View-space.
+    private func currentDisplayRect(in containerSize: CGSize) -> CGRect {
+        let base = aspectFitRect(
+            content: CGSize(width: session.imageWidth, height: session.imageHeight),
+            in: containerSize
+        )
+        let zoomedSize = CGSize(width: base.width * zoom, height: base.height * zoom)
+        let centerX = base.midX + pan.width
+        let centerY = base.midY + pan.height
+        return CGRect(
+            x: centerX - zoomedSize.width / 2,
+            y: centerY - zoomedSize.height / 2,
+            width: zoomedSize.width,
+            height: zoomedSize.height
+        )
     }
 
     private func drawCanvas(ctx: GraphicsContext, fitRect: CGRect) {
@@ -195,17 +291,32 @@ struct EraserEditorView: View {
 
     // MARK: - Gesture
 
-    private func strokeGesture(fitRect: CGRect) -> some Gesture {
+    /// Drag handler: tool mode determines behavior. `.eraser` paints
+    /// strokes, `.pan` translates the displayed rect.
+    private func combinedGesture(fitRect: CGRect) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 guard !isSaving else { return }
-                let img = imageCoord(view: value.location, fitRect: fitRect)
-                inProgressPoints.append(img)
+                switch tool {
+                case .eraser:
+                    let img = imageCoord(view: value.location, fitRect: fitRect)
+                    inProgressPoints.append(img)
+                case .pan:
+                    pan = CGSize(
+                        width: panStart.width + value.translation.width,
+                        height: panStart.height + value.translation.height
+                    )
+                }
             }
             .onEnded { _ in
-                guard !inProgressPoints.isEmpty else { return }
-                commitStroke(points: inProgressPoints)
-                inProgressPoints.removeAll()
+                switch tool {
+                case .eraser:
+                    guard !inProgressPoints.isEmpty else { return }
+                    commitStroke(points: inProgressPoints)
+                    inProgressPoints.removeAll()
+                case .pan:
+                    panStart = pan
+                }
             }
     }
 
@@ -347,6 +458,12 @@ struct EraserEditorView: View {
         case .failure(let err):
             saveError = "Kaydetme başarısız: \(err.localizedDescription)"
         }
+    }
+}
+
+private extension Comparable {
+    func clamped(to range: ClosedRange<Self>) -> Self {
+        min(max(self, range.lowerBound), range.upperBound)
     }
 }
 

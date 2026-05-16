@@ -253,7 +253,7 @@ public struct MainView: View {
     private var resultArea: some View {
         switch viewModel.state {
         case .completed(let url):
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                 Text(url.lastPathComponent)
@@ -261,15 +261,26 @@ public struct MainView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
-                Button("Reveal in Finder") {
+                Button {
                     NSWorkspace.shared.activateFileViewerSelecting([url])
+                } label: {
+                    Label("Finder", systemImage: "folder")
                 }
-                Button("Düzenle") {
+                .help("Finder'da göster")
+
+                Button {
                     presentEraserSheet(for: url)
+                } label: {
+                    Label("Düzenle", systemImage: "pencil.tip.crop.circle")
                 }
-                Button("Save As…") {
+                .help("Silgi düzenleyici aç")
+
+                Button {
                     saveAs(sourceURL: url)
+                } label: {
+                    Label("Farklı kaydet", systemImage: "square.and.arrow.down")
                 }
+                .help("Yeni konuma kaydet")
             }
         case .failed(let message):
             HStack(spacing: 10) {
