@@ -83,6 +83,51 @@ final class EraserApplierTests: XCTestCase {
         XCTAssertEqual(edited.lastPathComponent, "photo-upscaled-x4-edited.png")
     }
 
+    // MARK: - Adaptive background sampling (v0.3.5.4)
+
+    func testSampleBackground_whitePageReturnsNear255() {
+        // 32×32 pure-white page with a black blob in the center. Sample
+        // ring around the center should be pure white.
+        let w = 32, h = 32
+        var buf = [UInt8](repeating: 255, count: w * h)
+        for y in 12..<20 { for x in 12..<20 { buf[y * w + x] = 0 } }
+        let session = EraserSession(sourceURL: URL(fileURLWithPath: "/tmp/x"),
+                                    baseBuffer: buf, width: w, height: h)
+        let sampled = session.sampleBackgroundLuminance(
+            near: CGPoint(x: 16, y: 16),
+            brushRadius: 4
+        )
+        XCTAssertEqual(sampled, 255, "Sample ring outside black blob should be white")
+    }
+
+    func testSampleBackground_sepiaPageReturnsTintedValue() {
+        // 32×32 sepia tone (luminance 200) with a black detail. Sample
+        // should return ~200, not 255.
+        let w = 32, h = 32
+        var buf = [UInt8](repeating: 200, count: w * h)
+        for y in 14..<18 { for x in 14..<18 { buf[y * w + x] = 0 } }
+        let session = EraserSession(sourceURL: URL(fileURLWithPath: "/tmp/x"),
+                                    baseBuffer: buf, width: w, height: h)
+        let sampled = session.sampleBackgroundLuminance(
+            near: CGPoint(x: 16, y: 16),
+            brushRadius: 3
+        )
+        XCTAssertEqual(sampled, 200, "Sample on sepia page should return 200, not 255")
+    }
+
+    func testApply_strokeUsesItsOwnFillColor() {
+        let w = 16, h = 16
+        var buf = [UInt8](repeating: 0, count: w * h)
+        let stroke = BrushStroke(
+            points: [CGPoint(x: 8, y: 8)],
+            radius: 3,
+            fillColor: 200  // sepia tone, not pure white
+        )
+        EraserApplier.apply(stroke: stroke, to: &buf, width: w, height: h)
+        XCTAssertEqual(buf[8 * w + 8], 200,
+                       "Stroke should fill with its own fillColor, not default 255")
+    }
+
     func testResolveEditedURL_collisionAutoIncrement() throws {
         // Create a temp directory + pre-occupy the `-edited` slot to force
         // auto-increment.

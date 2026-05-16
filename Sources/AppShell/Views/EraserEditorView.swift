@@ -283,13 +283,15 @@ struct EraserEditorView: View {
         scale: CGFloat
     ) {
         let viewRadius = stroke.radius * scale
+        let g = Double(stroke.fillColor) / 255.0
+        let fill = Color(red: g, green: g, blue: g)
         for p in stroke.points {
             let vp = viewCoord(image: p, fitRect: fitRect)
             let rect = CGRect(
                 x: vp.x - viewRadius, y: vp.y - viewRadius,
                 width: viewRadius * 2, height: viewRadius * 2
             )
-            ctx.fill(Path(ellipseIn: rect), with: .color(.white))
+            ctx.fill(Path(ellipseIn: rect), with: .color(fill))
         }
     }
 
@@ -312,12 +314,19 @@ struct EraserEditorView: View {
                     )
                 }
             }
-            .onEnded { _ in
+            .onEnded { value in
                 switch tool {
                 case .eraser:
                     guard !inProgressPoints.isEmpty else { return }
                     commitStroke(points: inProgressPoints)
                     inProgressPoints.removeAll()
+                    // Sync hover to the drag's final position so the brush
+                    // preview circle stays under the cursor — without this,
+                    // hoverPoint still holds the pre-drag value (SwiftUI
+                    // suspends .onContinuousHover during drag), so the
+                    // preview snaps to the click-down spot until the next
+                    // mouse-move event.
+                    hoverPoint = imageCoord(view: value.location, fitRect: fitRect)
                 case .pan:
                     panStart = pan
                 }
@@ -326,7 +335,19 @@ struct EraserEditorView: View {
 
     private func commitStroke(points: [CGPoint]) {
         let densified = EraserApplier.densify(points, step: max(session.brushRadius * 0.5, 2))
-        let stroke = BrushStroke(points: densified, radius: session.brushRadius)
+        // Sample the surrounding page color at stroke start so the stroke
+        // mimics the background (coloring book = white, sepia/parchment =
+        // actual page tone) instead of always using hard white.
+        let sampleAt = points.first ?? .zero
+        let fill = session.sampleBackgroundLuminance(
+            near: sampleAt,
+            brushRadius: session.brushRadius
+        )
+        let stroke = BrushStroke(
+            points: densified,
+            radius: session.brushRadius,
+            fillColor: fill
+        )
         session.strokes.append(stroke)
         registerUndo()
     }

@@ -48,6 +48,56 @@ public final class EraserSession {
         self.imageHeight = height
     }
 
+    /// Sample the dominant background luminance in an annular ring around
+    /// `center` (image-space), between `radius` and `radius * 1.6`. Returns
+    /// the median value of the ring samples — picks "what the surrounding
+    /// page color is" without touching the brush footprint itself.
+    ///
+    /// Pure white pages (coloring books) return ~255. Sepia / parchment /
+    /// tinted pages return their actual luminance. Reads from `baseBuffer`
+    /// (original decoded source), so prior strokes don't contaminate the
+    /// sample even when strokes overlap.
+    ///
+    /// Used by `EraserEditorView` at stroke-start to pick a fill color
+    /// that mimics the surrounding page rather than a hard white default.
+    public func sampleBackgroundLuminance(near center: CGPoint, brushRadius: CGFloat) -> UInt8 {
+        let inner = brushRadius
+        let outer = brushRadius * 1.6
+        let innerSquared = inner * inner
+        let outerSquared = outer * outer
+
+        // Bounding box for the annulus.
+        let minX = max(0, Int(floor(center.x - outer)))
+        let maxX = min(imageWidth - 1, Int(ceil(center.x + outer)))
+        let minY = max(0, Int(floor(center.y - outer)))
+        let maxY = min(imageHeight - 1, Int(ceil(center.y + outer)))
+        if minX > maxX || minY > maxY { return 255 }
+
+        // Sample with stride to stay fast (~few hundred reads max).
+        let stride = max(1, Int((outer - inner) / 8))
+        var samples: [UInt8] = []
+        samples.reserveCapacity(256)
+        var y = minY
+        while y <= maxY {
+            let dy = CGFloat(y) + 0.5 - center.y
+            let dySquared = dy * dy
+            var x = minX
+            while x <= maxX {
+                let dx = CGFloat(x) + 0.5 - center.x
+                let distSquared = dx * dx + dySquared
+                if distSquared >= innerSquared && distSquared <= outerSquared {
+                    samples.append(baseBuffer[y * imageWidth + x])
+                }
+                x += stride
+            }
+            y += stride
+        }
+
+        if samples.isEmpty { return 255 }
+        samples.sort()
+        return samples[samples.count / 2]  // median
+    }
+
     /// Decode the PNG at `url` into a grayscale UInt8 buffer and return a
     /// fresh session. Throws on decode failure — caller surfaces error.
     public static func load(from url: URL) throws -> EraserSession {

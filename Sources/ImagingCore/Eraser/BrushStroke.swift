@@ -11,9 +11,15 @@ import CoreGraphics
 public struct BrushStroke: Sendable, Equatable {
     public let points: [CGPoint]
     public let radius: CGFloat
+    /// Grayscale fill value the stroke paints. Default 255 (pure white)
+    /// preserves prior behavior. v0.3.5.4: editor samples the ambient
+    /// background color at stroke-start so colored / sepia / parchment
+    /// pages erase to the page color, not a hard white circle.
+    public let fillColor: UInt8
 
-    public init(points: [CGPoint], radius: CGFloat) {
+    public init(points: [CGPoint], radius: CGFloat, fillColor: UInt8 = 255) {
         self.points = points
         self.radius = radius
+        self.fillColor = fillColor
     }
 }

@@ -22,27 +22,28 @@ public enum EraserApplier {
         stroke: BrushStroke,
         to buffer: inout [UInt8],
         width: Int, height: Int,
-        fillColor: UInt8 = 255
+        fillColor: UInt8? = nil
     ) {
         let r = stroke.radius
         let rSquared = r * r
+        let color = fillColor ?? stroke.fillColor
         for p in stroke.points {
             stampCircle(
                 cx: p.x, cy: p.y, radiusSquared: rSquared,
                 radius: r, buffer: &buffer,
                 width: width, height: height,
-                fillColor: fillColor
+                fillColor: color
             )
         }
     }
 
-    /// Apply a sequence of strokes in order. Convenience for save-time
-    /// composition (caller passes the full undo-respecting strokes list).
+    /// Apply a sequence of strokes in order. Each stroke contributes its
+    /// own fillColor unless `fillColor` override is passed (rare).
     public static func compose(
         strokes: [BrushStroke],
         onto buffer: inout [UInt8],
         width: Int, height: Int,
-        fillColor: UInt8 = 255
+        fillColor: UInt8? = nil
     ) {
         for stroke in strokes {
             apply(
