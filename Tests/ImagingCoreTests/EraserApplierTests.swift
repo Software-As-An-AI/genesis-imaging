@@ -128,6 +128,56 @@ final class EraserApplierTests: XCTestCase {
                        "Stroke should fill with its own fillColor, not default 255")
     }
 
+    // MARK: - composeFlatten (v0.3.5.6 Canva mask-then-flatten)
+
+    func testComposeFlatten_usesGlobalBackgroundNotPerStroke() {
+        // 32×32 mostly-white page (luminance 240) with a dark blob at one
+        // corner. A stroke that starts ADJACENT to the dark blob would
+        // previously sample dark pixels in its annulus and paint a muddy
+        // mid-grey. composeFlatten samples globally → still ~240.
+        let w = 32, h = 32
+        var buf = [UInt8](repeating: 240, count: w * h)
+        // Dark blob: rows 0..6, cols 0..6.
+        for y in 0..<6 { for x in 0..<6 { buf[y * w + x] = 0 } }
+
+        // Stroke starts at (8, 4) — right next to the dark blob. Per-stroke
+        // local sampling would catch the blob; composeFlatten ignores it.
+        let stroke = BrushStroke(
+            points: [CGPoint(x: 8, y: 4)],
+            radius: 3,
+            fillColor: 99  // ignored by composeFlatten
+        )
+        let bg = EraserApplier.composeFlatten(
+            strokes: [stroke],
+            onto: &buf,
+            width: w, height: h
+        )
+        XCTAssertEqual(bg, 240, "Global sample of unmasked pixels should be the page color (240), not biased by adjacent dark blob")
+        // Center of stroke should now equal bg, not 99.
+        XCTAssertEqual(buf[4 * w + 8], 240)
+        // Dark blob outside the stroke should remain untouched.
+        XCTAssertEqual(buf[0], 0)
+    }
+
+    func testComposeFlatten_strokeFillColorIgnored() {
+        // Verify stroke.fillColor doesn't leak into the flatten output —
+        // composeFlatten paints with the global bg sample regardless.
+        let w = 16, h = 16
+        var buf = [UInt8](repeating: 200, count: w * h)
+        let stroke = BrushStroke(
+            points: [CGPoint(x: 8, y: 8)],
+            radius: 3,
+            fillColor: 50  // arbitrary; must NOT appear in output
+        )
+        _ = EraserApplier.composeFlatten(
+            strokes: [stroke],
+            onto: &buf,
+            width: w, height: h
+        )
+        XCTAssertEqual(buf[8 * w + 8], 200,
+                       "composeFlatten should ignore stroke.fillColor and use global bg")
+    }
+
     func testResolveEditedURL_collisionAutoIncrement() throws {
         // Create a temp directory + pre-occupy the `-edited` slot to force
         // auto-increment.

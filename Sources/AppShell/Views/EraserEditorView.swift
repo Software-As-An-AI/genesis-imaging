@@ -108,7 +108,7 @@ struct EraserEditorView: View {
                 Image(systemName: "circle.fill")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                Slider(value: $session.brushDiameter, in: 10...400, step: 2)
+                Slider(value: $session.brushDiameter, in: 1...400, step: 1)
                     .frame(width: 140)
                 Text("\(Int(session.brushDiameter))")
                     .font(.callout.monospacedDigit())
@@ -302,6 +302,13 @@ struct EraserEditorView: View {
         }
     }
 
+    /// Stroke render color (Canva-style mask preview). Editor shows strokes
+    /// as semi-transparent magenta so the customer can clearly see what
+    /// they've marked — the actual flatten to page background happens on
+    /// save via `EraserApplier.composeFlatten`.
+    private static let maskColor = Color(red: 0.78, green: 0.24, blue: 0.85)
+        .opacity(0.85)
+
     private func drawStroke(
         _ stroke: BrushStroke,
         ctx: GraphicsContext,
@@ -309,15 +316,13 @@ struct EraserEditorView: View {
         scale: CGFloat
     ) {
         let viewRadius = stroke.radius * scale
-        let g = Double(stroke.fillColor) / 255.0
-        let fill = Color(red: g, green: g, blue: g)
         for p in stroke.points {
             let vp = viewCoord(image: p, fitRect: fitRect)
             let rect = CGRect(
                 x: vp.x - viewRadius, y: vp.y - viewRadius,
                 width: viewRadius * 2, height: viewRadius * 2
             )
-            ctx.fill(Path(ellipseIn: rect), with: .color(fill))
+            ctx.fill(Path(ellipseIn: rect), with: .color(Self.maskColor))
         }
     }
 
@@ -481,12 +486,14 @@ struct EraserEditorView: View {
         }
 
         // Compose strokes onto a full-res copy of the base buffer + encode.
+        // v0.3.5.6 flatten path: strokes become a mask, page background is
+        // the median of unmasked pixels, masked area fills with that bg.
         let result: Result<URL, Error> = await Task.detached(priority: .userInitiated) { [strokes = session.strokes,
                                                                                           base = session.baseBuffer,
                                                                                           width = session.imageWidth,
                                                                                           height = session.imageHeight] in
             var buf = base
-            EraserApplier.compose(
+            _ = EraserApplier.composeFlatten(
                 strokes: strokes,
                 onto: &buf,
                 width: width, height: height

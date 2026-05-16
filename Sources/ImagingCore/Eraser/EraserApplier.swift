@@ -81,6 +81,105 @@ public enum EraserApplier {
         return out
     }
 
+    // MARK: - Mask + global background flatten (Canva paradigm, v0.3.5.6)
+
+    /// Compose strokes onto `buffer` using a **holistic background color**
+    /// sampled from the unmasked region — not per-stroke local sampling.
+    ///
+    /// Customer report 2026-05-16: per-stroke local sampling produced
+    /// biased fill colors when the stroke started near a dark line — the
+    /// annular ring caught dark pixels and the whole stroke painted a
+    /// muddy mid-grey instead of the page color.
+    ///
+    /// Pipeline (Canva-style mask-then-flatten):
+    ///   1. Build a binary mask from all strokes (radius² stamping).
+    ///   2. Sample the median luminance of pixels OUTSIDE the mask in the
+    ///      original `buffer` — gives the true page background regardless
+    ///      of where strokes started.
+    ///   3. Fill every masked pixel with that median color.
+    ///
+    /// Each stroke's own `fillColor` is ignored in this path — the global
+    /// sample wins. Use `compose(strokes:onto:...)` if a per-stroke fill
+    /// is needed (legacy callers).
+    ///
+    /// - Returns: the page background luminance that was used as the fill
+    ///   (for callers that want to log it).
+    @discardableResult
+    public static func composeFlatten(
+        strokes: [BrushStroke],
+        onto buffer: inout [UInt8],
+        width: Int, height: Int
+    ) -> UInt8 {
+        let n = width * height
+        precondition(buffer.count == n)
+
+        // 1. Mask buffer.
+        var mask = [Bool](repeating: false, count: n)
+        for stroke in strokes {
+            stampMask(stroke: stroke, mask: &mask, width: width, height: height)
+        }
+
+        // 2. Background color: median luminance of unmasked pixels.
+        var unmasked: [UInt8] = []
+        unmasked.reserveCapacity(n / 4)  // estimate
+        // Stride sampling to keep this fast on 5K images (~25M px). Step 4
+        // gives ~1.5M samples — plenty for a stable median.
+        var i = 0
+        while i < n {
+            if !mask[i] { unmasked.append(buffer[i]) }
+            i += 4
+        }
+        // Fallback: if mask covers nearly everything, sample without stride
+        // from full unmasked set.
+        if unmasked.count < 1024 {
+            unmasked.removeAll()
+            for k in 0..<n where !mask[k] { unmasked.append(buffer[k]) }
+        }
+        let bg: UInt8
+        if unmasked.isEmpty {
+            bg = 255  // entire image masked → fallback to white
+        } else {
+            unmasked.sort()
+            bg = unmasked[unmasked.count / 2]
+        }
+
+        // 3. Fill masked pixels with bg.
+        for j in 0..<n where mask[j] {
+            buffer[j] = bg
+        }
+        return bg
+    }
+
+    /// Rasterize a single stroke's footprint into the binary mask. Mirrors
+    /// `stampCircle` geometry — radius² test inside a bounding box.
+    private static func stampMask(
+        stroke: BrushStroke,
+        mask: inout [Bool],
+        width: Int, height: Int
+    ) {
+        let r = stroke.radius
+        let rSquared = r * r
+        for p in stroke.points {
+            let minX = max(0, Int(floor(p.x - r)))
+            let maxX = min(width - 1, Int(ceil(p.x + r)))
+            let minY = max(0, Int(floor(p.y - r)))
+            let maxY = min(height - 1, Int(ceil(p.y + r)))
+            if minX > maxX || minY > maxY { continue }
+            for y in minY...maxY {
+                let dy = CGFloat(y) + 0.5 - p.y
+                let dySquared = dy * dy
+                if dySquared > rSquared { continue }
+                let row = y * width
+                for x in minX...maxX {
+                    let dx = CGFloat(x) + 0.5 - p.x
+                    if dx * dx + dySquared <= rSquared {
+                        mask[row + x] = true
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Encode
 
     /// Encode the buffer as a grayscale PNG to `url`. Mirrors
