@@ -43,6 +43,11 @@ public struct SmartOutputProcessor: Sendable {
         /// the on-disk filename so 3-preset A/B comparisons don't collide.
         public let appliedDespecklePreset: DespecklePreset?
 
+        /// Phase 4 (v0.3.4.0): true when Line Art Enhance ran. Used to
+        /// compose `-enhanced` filename suffix so A/B comparisons against
+        /// the non-enhanced output don't collide.
+        public let lineArtEnhanceApplied: Bool
+
         public var sizeRatio: Double {
             guard originalBytes > 0 else { return 1.0 }
             return Double(finalBytes) / Double(originalBytes)
@@ -57,7 +62,8 @@ public struct SmartOutputProcessor: Sendable {
             analysis: ContentDetector.Analysis?,
             adaptivePicked: SmartOutputMode? = nil,
             fingerprint: ContentFingerprint? = nil,
-            appliedDespecklePreset: DespecklePreset? = nil
+            appliedDespecklePreset: DespecklePreset? = nil,
+            lineArtEnhanceApplied: Bool = false
         ) {
             self.originalBytes = originalBytes
             self.finalBytes = finalBytes
@@ -68,6 +74,7 @@ public struct SmartOutputProcessor: Sendable {
             self.adaptivePicked = adaptivePicked
             self.fingerprint = fingerprint
             self.appliedDespecklePreset = appliedDespecklePreset
+            self.lineArtEnhanceApplied = lineArtEnhanceApplied
         }
     }
 
@@ -111,6 +118,28 @@ public struct SmartOutputProcessor: Sendable {
         return false
     }
 
+    /// Phase 4 (v0.3.4.0) — should `LineArtEnhanceFilter` run? Wider B/W
+    /// scope than despeckle: any B/W-leaning path benefits from halo
+    /// suppression + line clarity, including colors8/lineart (where
+    /// despeckle is skipped, enhance still helps).
+    static func shouldEnhance(
+        mode: SmartOutputMode,
+        adaptivePicked: SmartOutputMode?,
+        fingerprint: ContentFingerprint?
+    ) -> Bool {
+        let bwTargets: Set<SmartOutputMode> = [.binarize, .colors8]
+        if bwTargets.contains(mode) { return true }
+        if mode == .adaptive {
+            if let picked = adaptivePicked, bwTargets.contains(picked) {
+                return true
+            }
+            if let fp = fingerprint, fp.nearBinaryScore >= 0.85 {
+                return true
+            }
+        }
+        return false
+    }
+
     /// Process a PNG output through Smart Output pipeline.
     ///
     /// - Parameters:
@@ -127,7 +156,8 @@ public struct SmartOutputProcessor: Sendable {
         url: URL,
         mode: SmartOutputMode,
         despeckleEnabled: Bool = false,
-        despecklePreset: DespecklePreset = .normal
+        despecklePreset: DespecklePreset = .normal,
+        lineArtEnhanceEnabled: Bool = false
     ) throws -> ProcessResult {
         let originalBytes = fileSize(at: url)
 
@@ -240,6 +270,26 @@ public struct SmartOutputProcessor: Sendable {
             }
         }
 
+        // Phase 4 (v0.3.4.0): Line Art Enhance — median + level mapping.
+        // Independent of despeckle. Same B/W content guard (high
+        // nearBinaryScore OR explicit B/W mode). Bypassed otherwise to
+        // avoid degrading photo content.
+        var lineArtEnhanceApplied = false
+        if lineArtEnhanceEnabled && Self.shouldEnhance(
+            mode: mode,
+            adaptivePicked: adaptivePicked,
+            fingerprint: fingerprint
+        ) {
+            do {
+                try LineArtEnhanceFilter.apply(url: url)
+                lineArtEnhanceApplied = true
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "[line-art-enhance] non-fatal failure: \(error)\n".utf8
+                ))
+            }
+        }
+
         // Stage tmp.
         let parent = url.deletingLastPathComponent()
         let stem = url.deletingPathExtension().lastPathComponent
@@ -279,7 +329,8 @@ public struct SmartOutputProcessor: Sendable {
                 wasQuantized: wasQuantized, wasOptimized: true,
                 skipReason: "delta-guard", analysis: analysis,
                 adaptivePicked: adaptivePicked, fingerprint: fingerprint,
-                appliedDespecklePreset: appliedDespecklePreset
+                appliedDespecklePreset: appliedDespecklePreset,
+                lineArtEnhanceApplied: lineArtEnhanceApplied
             )
         }
 

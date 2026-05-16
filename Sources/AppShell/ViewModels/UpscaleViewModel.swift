@@ -128,6 +128,7 @@ public final class UpscaleViewModel {
                     let despecklePreset = DespecklePreset.from(
                         rawValue: SettingsStore.shared.despecklePreset
                     )
+                    let lineArtEnhanceEnabled = SettingsStore.shared.lineArtEnhanceEnabled
                     var finalOutputURL = result.outputURL
                     if smartMode != .off {
                         do {
@@ -135,23 +136,23 @@ public final class UpscaleViewModel {
                                 url: result.outputURL,
                                 mode: smartMode,
                                 despeckleEnabled: despeckleEnabled,
-                                despecklePreset: despecklePreset
+                                despecklePreset: despecklePreset,
+                                lineArtEnhanceEnabled: lineArtEnhanceEnabled
                             )
-                            // When .adaptive picked a concrete sub-mode, rewrite
-                            // the filename to advertise it: `-upscaled-adaptive`
-                            // → `-upscaled-adaptive-<picked>`.
                             if smartMode == .adaptive, let picked = pr.adaptivePicked {
                                 if let renamed = Self.renameWithAdaptivePicked(
                                     url: result.outputURL,
                                     picked: picked,
-                                    despecklePreset: pr.appliedDespecklePreset
+                                    despecklePreset: pr.appliedDespecklePreset,
+                                    enhanced: pr.lineArtEnhanceApplied
                                 ) {
                                     finalOutputURL = renamed
                                 }
-                            } else if let preset = pr.appliedDespecklePreset {
-                                // Manuel B/W mode + despeckle: filename'a suffix ekle.
-                                if let renamed = Self.appendDespeckleSuffix(
-                                    url: result.outputURL, preset: preset
+                            } else if pr.appliedDespecklePreset != nil || pr.lineArtEnhanceApplied {
+                                if let renamed = Self.appendPostProcessSuffix(
+                                    url: result.outputURL,
+                                    despecklePreset: pr.appliedDespecklePreset,
+                                    enhanced: pr.lineArtEnhanceApplied
                                 ) {
                                     finalOutputURL = renamed
                                 }
@@ -221,15 +222,22 @@ public final class UpscaleViewModel {
         }
     }
 
-    /// Append `-clean-<preset>` to a non-adaptive filename when despeckle
-    /// ran (manual `.binarize` / `.colors8` mode). Mirrors
-    /// `BatchQueue.appendDespeckleSuffix`. Returns new URL or nil on failure.
-    static func appendDespeckleSuffix(url: URL, preset: DespecklePreset) -> URL? {
+    /// Append `-clean-<preset>` and/or `-enhanced` to a non-adaptive
+    /// filename when despeckle and/or line-art-enhance ran. Mirrors
+    /// `BatchQueue.appendPostProcessSuffix`. Returns new URL or nil on failure.
+    static func appendPostProcessSuffix(
+        url: URL,
+        despecklePreset: DespecklePreset?,
+        enhanced: Bool
+    ) -> URL? {
         let dir = url.deletingLastPathComponent()
         let ext = url.pathExtension
         let stem = url.deletingPathExtension().lastPathComponent
-        if stem.contains("-clean-\(preset.rawValue)") { return url }
-        let newStem = "\(stem)-clean-\(preset.rawValue)"
+        let cleanPart = despecklePreset.map { "-clean-\($0.rawValue)" } ?? ""
+        let enhancePart = enhanced ? "-enhanced" : ""
+        let suffix = cleanPart + enhancePart
+        if suffix.isEmpty || stem.contains(suffix) { return url }
+        let newStem = "\(stem)\(suffix)"
         let newURL = dir.appendingPathComponent(newStem).appendingPathExtension(ext)
         if FileManager.default.fileExists(atPath: newURL.path) { return nil }
         do {
@@ -248,20 +256,23 @@ public final class UpscaleViewModel {
     static func renameWithAdaptivePicked(
         url: URL,
         picked: SmartOutputMode,
-        despecklePreset: DespecklePreset? = nil
+        despecklePreset: DespecklePreset? = nil,
+        enhanced: Bool = false
     ) -> URL? {
         let dir = url.deletingLastPathComponent()
         let stem = url.deletingPathExtension().lastPathComponent
         let ext = url.pathExtension
         let pickedTag = picked.filenameTag ?? "lossless"
         let cleanSuffix = despecklePreset.map { "-clean-\($0.rawValue)" } ?? ""
+        let enhanceSuffix = enhanced ? "-enhanced" : ""
+        let postSuffix = cleanSuffix + enhanceSuffix
 
         var newStem = stem
         if let range = newStem.range(of: "-adaptive") {
             let after = newStem[range.upperBound...]
-            newStem = String(newStem[..<range.upperBound]) + "-\(pickedTag)" + cleanSuffix + String(after)
+            newStem = String(newStem[..<range.upperBound]) + "-\(pickedTag)" + postSuffix + String(after)
         } else {
-            newStem = "\(stem)-\(pickedTag)\(cleanSuffix)"
+            newStem = "\(stem)-\(pickedTag)\(postSuffix)"
         }
 
         let newURL = dir.appendingPathComponent(newStem).appendingPathExtension(ext)

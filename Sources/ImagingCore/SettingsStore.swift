@@ -51,6 +51,14 @@ public final class SettingsStore {
         didSet { UserDefaults.standard.set(despecklePreset, forKey: Keys.despecklePreset) }
     }
 
+    /// Phase 4 (v0.3.4.0): Line Art Enhance — median 3×3 + luminance level
+    /// mapping. Independent from despeckle; targets halo + line clarity,
+    /// not isolated dust. Default `false` (opt-in, new feature, more
+    /// invasive than despeckle).
+    public var lineArtEnhanceEnabled: Bool {
+        didSet { UserDefaults.standard.set(lineArtEnhanceEnabled, forKey: Keys.lineArtEnhanceEnabled) }
+    }
+
     private enum Keys {
         static let enginePreference = "engine.preference"
         static let defaultModel = "engine.defaultModel"
@@ -59,6 +67,7 @@ public final class SettingsStore {
         static let smartOutputMode = "output.smartOutputMode"
         static let despeckleEnabled = "output.despeckleEnabled"
         static let despecklePreset = "output.despecklePreset"
+        static let lineArtEnhanceEnabled = "output.lineArtEnhanceEnabled"
     }
 
     /// Public initializer — primarily for `.shared`. A custom `UserDefaults`
@@ -82,5 +91,11 @@ public final class SettingsStore {
             self.despeckleEnabled = true
         }
         self.despecklePreset = ud.string(forKey: Keys.despecklePreset) ?? "normal"
+        // Line Art Enhance: default OFF (new + more invasive than despeckle).
+        if ud.object(forKey: Keys.lineArtEnhanceEnabled) != nil {
+            self.lineArtEnhanceEnabled = ud.bool(forKey: Keys.lineArtEnhanceEnabled)
+        } else {
+            self.lineArtEnhanceEnabled = false
+        }
     }
 }

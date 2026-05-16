@@ -49,6 +49,21 @@ struct DespeckleControlRow: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
+
+            // Phase 4 (v0.3.4.0) — line art enhance toggle. Independent of
+            // despeckle; addresses halo + line clarity, not isolated dust.
+            Toggle(isOn: $settings.lineArtEnhanceEnabled) {
+                Text("Line Art Temizle (halo + line netleştirme)")
+                    .font(.callout)
+            }
+            .toggleStyle(.checkbox)
+            .disabled(smartOutputDisabled)
+
+            if !smartOutputDisabled, settings.lineArtEnhanceEnabled {
+                Text("Çizgi etrafındaki gri halo'yu temizler + çizgileri netleştirir. ~2-3 sn ek post-process.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 
