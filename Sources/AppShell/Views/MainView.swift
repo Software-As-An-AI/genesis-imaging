@@ -17,6 +17,8 @@ public struct MainView: View {
     @State private var viewModel = UpscaleViewModel()
     @State private var showFileImporter = false
     @State private var isDropTargeted = false
+    @State private var eraserSession: EraserSession? = nil
+    @State private var eraserLoadError: String? = nil
 
     /// Owned for the lifetime of the window. Seeded with the same defaults
     /// the single-file picker offers so the batch UI feels continuous.
@@ -85,6 +87,37 @@ public struct MainView: View {
             if case let .success(urls) = result {
                 handleSelected(urls: urls)
             }
+        }
+        .sheet(item: Binding(
+            get: { eraserSession.map { EraserSessionWrapper(session: $0) } },
+            set: { newValue in if newValue == nil { eraserSession = nil } }
+        )) { wrapper in
+            EraserEditorView(
+                session: wrapper.session,
+                onSaved: { _ in eraserSession = nil },
+                onCancel: { eraserSession = nil }
+            )
+        }
+        .alert("Eraser açılamadı", isPresented: Binding(
+            get: { eraserLoadError != nil },
+            set: { if !$0 { eraserLoadError = nil } }
+        )) {
+            Button("Tamam", role: .cancel) { eraserLoadError = nil }
+        } message: {
+            Text(eraserLoadError ?? "")
+        }
+    }
+
+    private struct EraserSessionWrapper: Identifiable {
+        let id = UUID()
+        let session: EraserSession
+    }
+
+    private func presentEraserSheet(for url: URL) {
+        do {
+            eraserSession = try EraserSession.load(from: url)
+        } catch {
+            eraserLoadError = "Düzenleyici açılamadı: \(error.localizedDescription)"
         }
     }
 
@@ -230,6 +263,9 @@ public struct MainView: View {
                 Spacer()
                 Button("Reveal in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+                Button("Düzenle") {
+                    presentEraserSheet(for: url)
                 }
                 Button("Save As…") {
                     saveAs(sourceURL: url)

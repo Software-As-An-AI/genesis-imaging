@@ -22,6 +22,11 @@ public struct QueueRowView: View {
     /// list so only one popover is visible at a time.
     @Binding var openOverridePopoverID: UUID?
 
+    /// In-flight eraser session, if the editor sheet is presented for this
+    /// row. Local to the row — only one eraser sheet per row at a time.
+    @State private var eraserSession: EraserSession? = nil
+    @State private var eraserLoadError: String? = nil
+
     public init(
         queue: BatchQueue,
         item: QueueItem,
@@ -30,6 +35,16 @@ public struct QueueRowView: View {
         self.queue = queue
         self.item = item
         self._openOverridePopoverID = openOverridePopoverID
+    }
+
+    /// Decode the output PNG and present the eraser sheet. Errors surface
+    /// as a brief alert; the row stays unchanged on failure.
+    private func presentEraserSheet(for url: URL) {
+        do {
+            eraserSession = try EraserSession.load(from: url)
+        } catch {
+            eraserLoadError = "Düzenleyici açılamadı: \(error.localizedDescription)"
+        }
     }
 
     public var body: some View {
@@ -83,6 +98,14 @@ public struct QueueRowView: View {
                 }
                 .buttonStyle(.iconHover)
                 .help("Finder'da göster")
+
+                Button {
+                    presentEraserSheet(for: outURL)
+                } label: {
+                    Image(systemName: "pencil.tip.crop.circle")
+                }
+                .buttonStyle(.iconHover)
+                .help("Düzenle — Eraser brush")
             }
 
             Button {
@@ -118,6 +141,32 @@ public struct QueueRowView: View {
             .disabled(queue.phase == .processing && item.state == .processing)
         }
         .padding(.vertical, 6)
+        .sheet(item: Binding(
+            get: { eraserSession.map { EraserSessionWrapper(id: item.id, session: $0) } },
+            set: { newValue in if newValue == nil { eraserSession = nil } }
+        )) { wrapper in
+            EraserEditorView(
+                session: wrapper.session,
+                onSaved: { _ in eraserSession = nil },
+                onCancel: { eraserSession = nil }
+            )
+        }
+        .alert("Eraser açılamadı", isPresented: Binding(
+            get: { eraserLoadError != nil },
+            set: { if !$0 { eraserLoadError = nil } }
+        )) {
+            Button("Tamam", role: .cancel) { eraserLoadError = nil }
+        } message: {
+            Text(eraserLoadError ?? "")
+        }
+    }
+
+    /// SwiftUI `.sheet(item:)` needs `Identifiable`. `EraserSession` is a
+    /// class but not Identifiable; wrap it so the row's item id drives
+    /// dismissal semantics.
+    private struct EraserSessionWrapper: Identifiable {
+        let id: UUID
+        let session: EraserSession
     }
 
     // MARK: - Subviews

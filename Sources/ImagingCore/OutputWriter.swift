@@ -76,6 +76,34 @@ public enum OutputWriter {
             .appendingPathExtension(ext)
     }
 
+    /// Resolve a destination URL for an "edited" variant of `source` — same
+    /// directory, same extension, stem suffixed with `-edited`. On collision,
+    /// auto-increment as `-edited-2`, `-edited-3`, ... Used by the manual
+    /// eraser brush "Save as new file" flow.
+    public static func resolveEditedURL(source: URL) -> URL {
+        let dir = source.deletingLastPathComponent().standardizedFileURL
+        let ext = source.pathExtension
+        let stem = source.deletingPathExtension().lastPathComponent
+        let baseStem = "\(stem)-edited"
+
+        let first = dir.appendingPathComponent(baseStem)
+            .appendingPathExtension(ext)
+        if !FileManager.default.fileExists(atPath: first.path) {
+            return first
+        }
+        var counter = 2
+        while counter < 10_000 {
+            let candidate = dir.appendingPathComponent("\(baseStem)-\(counter)")
+                .appendingPathExtension(ext)
+            if !FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+            counter += 1
+        }
+        return dir.appendingPathComponent("\(baseStem)-\(counter)")
+            .appendingPathExtension(ext)
+    }
+
     // MARK: - Atomic Write
 
     /// Write `data` to `url` atomically via tmp-then-rename.
