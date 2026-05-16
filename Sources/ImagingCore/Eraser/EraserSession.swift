@@ -108,8 +108,14 @@ public final class EraserSession {
         let w = cg.width
         let h = cg.height
         var pixels = [UInt8](repeating: 0, count: w * h)
-        guard let cs = CGColorSpace(name: CGColorSpace.linearGray)
-                ?? CGColorSpace(name: CGColorSpace.genericGrayGamma2_2)
+        // IMPORTANT: decode + encode MUST share the same colorspace. We use
+        // genericGrayGamma2_2 (sRGB-equivalent perceptual grey) end-to-end.
+        // Using linearGray here would shift gamma: byte 128 means linear 0.5
+        // when decoded, but encodePNG writes gamma 2.2 → byte 128 reads as
+        // linear ~0.22 on display. Symptom: whole image smudges to grey
+        // after a flatten operation. See customer report 2026-05-16.
+        guard let cs = CGColorSpace(name: CGColorSpace.genericGrayGamma2_2)
+            ?? CGColorSpaceCreateDeviceGray() as CGColorSpace?
         else { throw EraserError.bufferAllocationFailed }
         let bitmapInfo = CGImageAlphaInfo.none.rawValue
         guard let ctx = pixels.withUnsafeMutableBufferPointer({ buf -> CGContext? in

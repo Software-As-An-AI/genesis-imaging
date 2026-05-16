@@ -107,8 +107,10 @@ public enum LineArtEnhanceFilter {
 
         // 2. Render to 8-bit grayscale buffer
         var pixels = [UInt8](repeating: 0, count: width * height)
-        guard let cs = CGColorSpace(name: CGColorSpace.linearGray)
-                ?? CGColorSpace(name: CGColorSpace.genericGrayGamma2_2)
+        // Same colorspace for decode + encode to avoid gamma shift; see
+        // EraserSession.load for the customer-reported smudge symptom.
+        guard let cs = CGColorSpace(name: CGColorSpace.genericGrayGamma2_2)
+            ?? CGColorSpaceCreateDeviceGray() as CGColorSpace?
         else { throw FilterError.bufferAllocationFailed }
 
         let bitmapInfo = CGImageAlphaInfo.none.rawValue
