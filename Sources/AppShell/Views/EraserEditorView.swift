@@ -47,6 +47,11 @@ struct EraserEditorView: View {
     /// Pan baseline captured at drag start (so successive drags accumulate).
     @State private var panStart: CGSize = .zero
 
+    /// Zoom baseline captured at pinch start — `MagnificationGesture` reports
+    /// the cumulative scale factor relative to gesture start, so we multiply
+    /// by this baseline to land at the new absolute zoom.
+    @State private var magnifyStart: CGFloat = 1.0
+
     /// Tool mode: `.eraser` (drag erases), `.pan` (drag pans the canvas).
     @State private var tool: Tool = .eraser
 
@@ -192,12 +197,15 @@ struct EraserEditorView: View {
     private func zoomBy(_ factor: CGFloat) {
         let next = (zoom * factor).clamped(to: 0.25...8.0)
         zoom = next
-        if zoom == 1.0 { pan = .zero }
+        magnifyStart = next  // sync baseline so a subsequent pinch starts from here
+        if zoom == 1.0 { pan = .zero; panStart = .zero }
     }
 
     private func resetView() {
         zoom = 1.0
         pan = .zero
+        panStart = .zero
+        magnifyStart = 1.0
     }
 
     // MARK: - Canvas
@@ -210,6 +218,9 @@ struct EraserEditorView: View {
             }
             .contentShape(Rectangle())
             .gesture(combinedGesture(fitRect: displayRect))
+            // Trackpad pinch — runs simultaneously with the drag gesture so
+            // the customer can pinch-zoom mid-stroke without dropping the brush.
+            .simultaneousGesture(magnifyGesture)
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let p):
@@ -219,6 +230,21 @@ struct EraserEditorView: View {
                 }
             }
         }
+    }
+
+    /// Trackpad pinch handler. `MagnificationGesture.value` is the cumulative
+    /// scale factor relative to gesture start (1.0 = no change). Multiply
+    /// `magnifyStart` (zoom snapshot at gesture begin) for the new absolute
+    /// zoom, clamped to the toolbar's [0.25, 8.0] range.
+    private var magnifyGesture: some Gesture {
+        MagnificationGesture()
+            .onChanged { value in
+                zoom = (magnifyStart * value).clamped(to: 0.25...8.0)
+                if zoom == 1.0 { pan = .zero; panStart = .zero }
+            }
+            .onEnded { _ in
+                magnifyStart = zoom
+            }
     }
 
     /// Current display rect = aspect-fit × zoom + pan offset. View-space.
