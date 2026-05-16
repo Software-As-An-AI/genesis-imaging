@@ -103,13 +103,25 @@ struct EraserEditorView: View {
             .labelsHidden()
             .help("Silgi (E) / Kaydır (H)")
 
-            // Brush size (only meaningful in eraser mode)
-            HStack(spacing: 6) {
+            // Brush size — minus/plus + slider + numeric. Keyboard shortcuts
+            // [ and ] follow Photoshop convention; step is 1 px (precise) but
+            // shift-modifier gives ×5 step for faster sweeps.
+            HStack(spacing: 4) {
                 Image(systemName: "circle.fill")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                Button { adjustBrush(-1) } label: {
+                    Image(systemName: "minus")
+                }
+                .help("Brush küçült ([)")
+                .keyboardShortcut("[", modifiers: [])
                 Slider(value: $session.brushDiameter, in: 1...400, step: 1)
-                    .frame(width: 140)
+                    .frame(width: 120)
+                Button { adjustBrush(1) } label: {
+                    Image(systemName: "plus")
+                }
+                .help("Brush büyüt (])")
+                .keyboardShortcut("]", modifiers: [])
                 Text("\(Int(session.brushDiameter))")
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -208,39 +220,86 @@ struct EraserEditorView: View {
         magnifyStart = 1.0
     }
 
+    /// Apply `newZoom` while keeping `anchorImagePoint` stationary in view
+    /// space. Used by trackpad pinch so the spot under the cursor stays
+    /// put as the image scales — feels much more natural than zooming
+    /// toward the image center.
+    private func setZoom(
+        _ newZoom: CGFloat,
+        anchorImagePoint anchor: CGPoint,
+        containerSize: CGSize
+    ) {
+        let clamped = newZoom.clamped(to: 0.25...8.0)
+        let oldRect = currentDisplayRect(in: containerSize)
+        let oldView = viewCoord(image: anchor, fitRect: oldRect)
+        zoom = clamped
+        let newRect = currentDisplayRect(in: containerSize)
+        let newView = viewCoord(image: anchor, fitRect: newRect)
+        pan = CGSize(
+            width: pan.width + (oldView.x - newView.x),
+            height: pan.height + (oldView.y - newView.y)
+        )
+        panStart = pan
+    }
+
+    // MARK: - Brush adjust
+
+    private func adjustBrush(_ delta: Int) {
+        let next = max(1, min(400, Int(session.brushDiameter) + delta))
+        session.brushDiameter = CGFloat(next)
+    }
+
     // MARK: - Canvas
 
     private var canvasArea: some View {
         GeometryReader { geo in
             let displayRect = currentDisplayRect(in: geo.size)
-            Canvas { ctx, _ in
-                drawCanvas(ctx: ctx, fitRect: displayRect)
-            }
-            .contentShape(Rectangle())
-            .gesture(combinedGesture(fitRect: displayRect))
-            // Trackpad pinch — runs simultaneously with the drag gesture so
-            // the customer can pinch-zoom mid-stroke without dropping the brush.
-            .simultaneousGesture(magnifyGesture)
-            .onContinuousHover { phase in
-                switch phase {
-                case .active(let p):
-                    hoverPoint = imageCoord(view: p, fitRect: displayRect)
-                case .ended:
-                    hoverPoint = nil
+            ZStack {
+                Canvas { ctx, _ in
+                    drawCanvas(ctx: ctx, fitRect: displayRect)
                 }
+                .contentShape(Rectangle())
+                .gesture(combinedGesture(fitRect: displayRect))
+                .simultaneousGesture(magnifyGesture(containerSize: geo.size))
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let p):
+                        hoverPoint = imageCoord(view: p, fitRect: displayRect)
+                    case .ended:
+                        hoverPoint = nil
+                    }
+                }
+                // Two-finger trackpad scroll → pan. NSEvent monitor lives
+                // in this transparent NSView (sits on top of Canvas without
+                // blocking pointer events; scroll events are intercepted
+                // only while the eraser sheet is in front).
+                ScrollWheelPanCatcher { dx, dy in
+                    pan = CGSize(
+                        width: pan.width + dx,
+                        height: pan.height + dy
+                    )
+                    panStart = pan
+                }
+                .allowsHitTesting(false)
             }
         }
     }
 
     /// Trackpad pinch handler. `MagnificationGesture.value` is the cumulative
-    /// scale factor relative to gesture start (1.0 = no change). Multiply
-    /// `magnifyStart` (zoom snapshot at gesture begin) for the new absolute
-    /// zoom, clamped to the toolbar's [0.25, 8.0] range.
-    private var magnifyGesture: some Gesture {
+    /// scale factor relative to gesture start (1.0 = no change). When the
+    /// customer hovers over a point before pinching, that point becomes
+    /// the zoom anchor — the spot under the cursor stays put while the
+    /// image scales (Photoshop / Preview reflex). No hover → image-center.
+    private func magnifyGesture(containerSize: CGSize) -> some Gesture {
         MagnificationGesture()
             .onChanged { value in
-                zoom = (magnifyStart * value).clamped(to: 0.25...8.0)
-                if zoom == 1.0 { pan = .zero; panStart = .zero }
+                let target = (magnifyStart * value).clamped(to: 0.25...8.0)
+                if let anchor = hoverPoint {
+                    setZoom(target, anchorImagePoint: anchor, containerSize: containerSize)
+                } else {
+                    zoom = target
+                    if zoom == 1.0 { pan = .zero; panStart = .zero }
+                }
             }
             .onEnded { _ in
                 magnifyStart = zoom
