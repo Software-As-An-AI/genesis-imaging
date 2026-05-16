@@ -260,7 +260,6 @@ struct EraserEditorView: View {
                 }
                 .contentShape(Rectangle())
                 .gesture(combinedGesture(fitRect: displayRect))
-                .simultaneousGesture(magnifyGesture(containerSize: geo.size))
                 .onContinuousHover { phase in
                     switch phase {
                     case .active(let p):
@@ -269,41 +268,35 @@ struct EraserEditorView: View {
                         hoverPoint = nil
                     }
                 }
-                // Two-finger trackpad scroll → pan. NSEvent monitor lives
-                // in this transparent NSView (sits on top of Canvas without
-                // blocking pointer events; scroll events are intercepted
-                // only while the eraser sheet is in front).
-                ScrollWheelPanCatcher { dx, dy in
-                    pan = CGSize(
-                        width: pan.width + dx,
-                        height: pan.height + dy
-                    )
-                    panStart = pan
-                }
+                // NSEvent-based trackpad gesture catcher — works in both
+                // packaged and dev builds. Captures scroll → pan, magnify
+                // → zoom anchored on hoverPoint when available.
+                TrackpadGestureCatcher(
+                    onScrollPan: { dx, dy in
+                        pan = CGSize(
+                            width: pan.width + dx,
+                            height: pan.height + dy
+                        )
+                        panStart = pan
+                    },
+                    onMagnify: { delta in
+                        // NSEvent magnify delta is incremental (-1...+1 typical);
+                        // accumulate against current zoom rather than baseline.
+                        let target = (zoom * (1.0 + delta)).clamped(to: 0.25...8.0)
+                        if let anchor = hoverPoint {
+                            setZoom(target, anchorImagePoint: anchor, containerSize: geo.size)
+                        } else {
+                            zoom = target
+                            if zoom == 1.0 { pan = .zero; panStart = .zero }
+                        }
+                    },
+                    onMagnifyEnd: {
+                        magnifyStart = zoom
+                    }
+                )
                 .allowsHitTesting(false)
             }
         }
-    }
-
-    /// Trackpad pinch handler. `MagnificationGesture.value` is the cumulative
-    /// scale factor relative to gesture start (1.0 = no change). When the
-    /// customer hovers over a point before pinching, that point becomes
-    /// the zoom anchor — the spot under the cursor stays put while the
-    /// image scales (Photoshop / Preview reflex). No hover → image-center.
-    private func magnifyGesture(containerSize: CGSize) -> some Gesture {
-        MagnificationGesture()
-            .onChanged { value in
-                let target = (magnifyStart * value).clamped(to: 0.25...8.0)
-                if let anchor = hoverPoint {
-                    setZoom(target, anchorImagePoint: anchor, containerSize: containerSize)
-                } else {
-                    zoom = target
-                    if zoom == 1.0 { pan = .zero; panStart = .zero }
-                }
-            }
-            .onEnded { _ in
-                magnifyStart = zoom
-            }
     }
 
     /// Current display rect = aspect-fit × zoom + pan offset. View-space.

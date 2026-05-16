@@ -1,52 +1,82 @@
 import SwiftUI
 import AppKit
 
-/// Transparent NSViewRepresentable that captures `scrollWheel` events
-/// (trackpad two-finger drag, mouse scroll) and forwards them to a
-/// closure as `(dx, dy)` deltas in view-space points.
+/// Captures trackpad gesture events (scroll for pan, pinch for zoom) while
+/// a SwiftUI view is on screen, forwarding them as deltas to closures.
 ///
-/// Used by `EraserEditorView` so the customer can pan around the canvas
-/// with a two-finger trackpad gesture after zooming in — no mode-switch
-/// to "Pan" tool required. Closure receives raw deltas; the editor
-/// applies them to its `pan` state.
+/// Implementation note (2026-05-16 dev-test bug): An earlier attempt used
+/// a transparent NSViewRepresentable with `hitTest → nil`. That works in
+/// packaged signed apps but NOT in `swift run` bare-binary dev builds —
+/// AppKit's scroll routing depends on hit-test results and the SwiftUI
+/// Canvas underneath has no handler, so events dropped. SwiftUI's native
+/// `MagnificationGesture` had the same dev-vs-packaged disparity.
 ///
-/// The hosting NSView is **non-blocking for hit testing** (`hitTest`
-/// returns nil), so clicks/drags pass through to the SwiftUI Canvas
-/// underneath. Scroll events are still routed here because AppKit's
-/// scroll dispatch walks the responder chain, not just the hit chain.
-struct ScrollWheelPanCatcher: NSViewRepresentable {
-    /// Closure invoked on every scroll wheel event. `(dx, dy)` are
-    /// `scrollingDeltaX` / `scrollingDeltaY` from `NSEvent` — positive
-    /// dx = swipe right, positive dy = swipe down (macOS natural).
-    let onScroll: (CGFloat, CGFloat) -> Void
+/// `NSEvent.addLocalMonitorForEvents` sidesteps the routing problem:
+/// monitor receives all matching events on the active window before
+/// dispatch. We check the cursor is inside the view's global frame, then
+/// forward + consume (return nil), otherwise pass through (return event).
+///
+/// Both pan (`scrollWheel`) and zoom (`magnify`) handled in one monitor.
+struct TrackpadGestureCatcher: View {
+    let onScrollPan: (CGFloat, CGFloat) -> Void
+    let onMagnify: (CGFloat) -> Void
+    let onMagnifyEnd: () -> Void
 
-    func makeNSView(context: Context) -> CatcherView {
-        let view = CatcherView()
-        view.onScroll = onScroll
-        return view
-    }
+    @State private var monitor: Any? = nil
+    @State private var globalBounds: CGRect = .zero
 
-    func updateNSView(_ nsView: CatcherView, context: Context) {
-        nsView.onScroll = onScroll
-    }
-
-    final class CatcherView: NSView {
-        var onScroll: ((CGFloat, CGFloat) -> Void)?
-
-        override var acceptsFirstResponder: Bool { true }
-
-        override func hitTest(_ point: NSPoint) -> NSView? {
-            // Transparent to pointer hit — clicks fall through to the
-            // SwiftUI Canvas below.
-            nil
+    var body: some View {
+        GeometryReader { geo in
+            Color.clear
+                .onAppear {
+                    updateBounds(geo)
+                    install()
+                }
+                .onDisappear { uninstall() }
+                .onChange(of: geo.frame(in: .global)) { _, _ in updateBounds(geo) }
         }
+    }
 
-        override func scrollWheel(with event: NSEvent) {
-            // Natural macOS: dy > 0 = content moves down (i.e., view of
-            // content scrolls up). For a pan gesture we want the image
-            // to follow the fingers, so we forward delta as-is and the
-            // editor decides direction.
-            onScroll?(event.scrollingDeltaX, event.scrollingDeltaY)
+    private func updateBounds(_ geo: GeometryProxy) {
+        globalBounds = geo.frame(in: .global)
+    }
+
+    private func install() {
+        guard monitor == nil else { return }
+        let mask: NSEvent.EventTypeMask = [.scrollWheel, .magnify]
+        monitor = NSEvent.addLocalMonitorForEvents(matching: mask) { event in
+            // Filter: cursor must be inside the view's screen frame.
+            guard isInside(event: event) else { return event }
+
+            switch event.type {
+            case .scrollWheel:
+                onScrollPan(event.scrollingDeltaX, event.scrollingDeltaY)
+                return nil
+            case .magnify:
+                onMagnify(event.magnification)
+                if event.phase == .ended || event.phase == .cancelled {
+                    onMagnifyEnd()
+                }
+                return nil
+            default:
+                return event
+            }
+        }
+    }
+
+    private func isInside(event: NSEvent) -> Bool {
+        guard let window = event.window else { return false }
+        let inWindow = event.locationInWindow
+        let onScreen = window.convertPoint(toScreen: inWindow)
+        let screenHeight = window.screen?.frame.height ?? 0
+        let flippedY = screenHeight - onScreen.y
+        return globalBounds.contains(CGPoint(x: onScreen.x, y: flippedY))
+    }
+
+    private func uninstall() {
+        if let m = monitor {
+            NSEvent.removeMonitor(m)
+            monitor = nil
         }
     }
 }
