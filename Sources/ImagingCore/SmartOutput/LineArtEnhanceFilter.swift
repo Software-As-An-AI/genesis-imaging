@@ -3,39 +3,74 @@ import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
 
-/// Line Art Enhance — manual 3×3 median + luminance level mapping.
+/// Line Art Enhance — luminance level mapping (Photoshop "Levels" tool).
 ///
-/// Designed to mimic the manual cleanup Etsy coloring book artists do in
-/// Photoshop/Pixelmator: kill the soft grey halo around lines, push uniform
-/// near-white pixels to pure white, push near-black pixels to pure black,
-/// preserve controlled anti-aliasing only at edges.
+/// v0.3.4.1: median 3×3 removed after empirical test on Nadezhda's
+/// reference image (`Tests/.../LineArtEnhanceEmpiricalTest.swift`)
+/// proved median net-negative — it grew the halo zone (8.32% → 9.49%)
+/// because grey edge pixels get reassigned to neighbor majority. Levels-only
+/// path: halo 8.32% → 4.16%, extremes 21.75% → 93.17%. Cleaner result + 10×
+/// faster (~0.1s vs ~2-3s).
 ///
-/// Algorithm (two stages):
+/// Algorithm — single stage:
 ///
-/// 1. **Median 3×3 (manual Swift)** — non-linear edge-preserving denoise.
-///    Each output pixel = median of its 9 surrounding pixels (3×3 window).
-///    Smooths scattered grey halo (mid-luminance cluster pixels) without
-///    blurring line edges. Median is robust to outlier minority pixels
-///    around an edge — the dominant value (black inside a line, white
-///    outside) wins, so edges stay sharp.
+/// **Luminance level mapping (LUT-based):**
+/// - pixel ≤ `darkCutoff`  → 0   (push to pure black)
+/// - pixel ≥ `lightCutoff` → 255 (push to pure white)
+/// - between               → linear stretch (preserve anti-alias gradient)
 ///
-///    Note: Apple's `vImage` on macOS SDK doesn't expose a native median
-///    primitive (only min/max morphological filters in `Morphology.h`).
-///    Manual Swift implementation: ~2-3s on 5K image, acceptable as a
-///    one-time post-process step (engine raw upscale already takes 25s).
+/// Mimics Photoshop "Levels" tool. Halo (mid-luminance grey clusters)
+/// collapses to extremes; real anti-alias gradient at line edges stays
+/// linearly stretched so curves remain smooth.
 ///
-/// 2. **Luminance level mapping** — LUT-based pixel transform:
-///    - pixel ≤ `darkCutoff`  → 0   (push to pure black)
-///    - pixel ≥ `lightCutoff` → 255 (push to pure white)
-///    - between               → linear stretch (preserve anti-alias gradient)
+/// 3 calibrated presets (`LineArtEnhancePreset`): soft / normal / strong.
+/// Tradeoff: tighter levels → more halo removal but more anti-alias loss.
+/// Aggressiveness preset for `LineArtEnhanceFilter`. Controls how tightly
+/// the luminance level mapping pushes mid-grey pixels to extremes.
 ///
-///    Mimics Photoshop "Levels" tool. Combined with median, the halo
-///    collapses cleanly while real anti-alias edges stay smooth.
+/// Calibration (2026-05-16) — empirical histogram test on Nadezhda's
+/// basketball comic reference (1254×1254). Halo zone = % pixels in [60-220]:
 ///
-/// Pragmatic trade-off: a true bilateral filter would be marginally better
-/// (~5-15% more halo removal) but requires either OpenCV bundle or much
-/// heavier manual implementation. Median+Levels delivers ~85% of bilateral
-/// quality at simpler cost.
+/// | Preset  | (dark, light) | Halo after | Extremes after |
+/// |---------|---------------|------------|----------------|
+/// | Baseline (no enhance) | —     | 8.32% | 21.75% |
+/// | Yumuşak | (60, 220)     | ~5.5% | ~88%   |
+/// | Normal  | (80, 180)     | ~3.3% | ~94.6% |
+/// | Agresif | (100, 160)    | ~1.8% | ~97%   |
+public enum LineArtEnhancePreset: String, CaseIterable, Codable, Sendable {
+    case soft   = "soft"
+    case normal = "normal"   // default, empirical sweet spot
+    case strong = "strong"
+
+    public var parameters: LineArtEnhanceFilter.Parameters {
+        switch self {
+        case .soft:   return .init(darkCutoff: 60,  lightCutoff: 220)
+        case .normal: return .init(darkCutoff: 80,  lightCutoff: 180)
+        case .strong: return .init(darkCutoff: 100, lightCutoff: 160)
+        }
+    }
+
+    public var label: String {
+        switch self {
+        case .soft:   return "Yumuşak — anti-alias preserve"
+        case .normal: return "Normal — dengeli (önerilen)"
+        case .strong: return "Agresif — max temizlik, çizgi sertleşir"
+        }
+    }
+
+    public var hint: String {
+        switch self {
+        case .soft:   return "Hafif halo bastırma, çizgi yumuşaklığı korunur"
+        case .normal: return "Empirical optimal: halo %3'e iner, anti-alias muhafaza"
+        case .strong: return "Maksimum halo temizliği, anti-alias kayıp olur"
+        }
+    }
+
+    public static func from(rawValue: String) -> LineArtEnhancePreset {
+        LineArtEnhancePreset(rawValue: rawValue) ?? .normal
+    }
+}
+
 public enum LineArtEnhanceFilter {
 
     public enum FilterError: Error {
@@ -44,10 +79,6 @@ public enum LineArtEnhanceFilter {
         case bufferAllocationFailed
     }
 
-    /// Fixed parameters for v0.3.4.0 ship. Calibrated against Nadezhda's
-    /// dirty/clean reference pair (basketball comic, 4-panel) — empirical
-    /// baseline. Tune in Phase B if customer feedback surfaces edge cases.
-    ///
     /// `darkCutoff` / `lightCutoff` are absolute 0-255 luminance values:
     /// the linear stretch maps `(darkCutoff, lightCutoff)` → `(0, 255)`,
     /// with values below/above the cutoffs clamped to the extremes.
@@ -55,10 +86,7 @@ public enum LineArtEnhanceFilter {
         public let darkCutoff: UInt8
         public let lightCutoff: UInt8
 
-        public static let `default` = Parameters(
-            darkCutoff: 60,    // pixels ≤ 60 → pure black (line cores)
-            lightCutoff: 200   // pixels ≥ 200 → pure white (halo bastırma)
-        )
+        public static let `default` = Parameters(darkCutoff: 80, lightCutoff: 180)
     }
 
     /// Apply enhancement in-place: read PNG at `url`, write the enhanced
@@ -111,13 +139,12 @@ public enum LineArtEnhanceFilter {
     }
 
     /// Public for unit testing — operate directly on a grayscale buffer.
-    /// Median 3×3 + level mapping, in place.
+    /// Level mapping only (median dropped in v0.3.4.1, empirically net-negative).
     static func applyOnGrayscale(
         buffer: inout [UInt8],
         width: Int, height: Int,
         parameters: Parameters
     ) {
-        median3x3InPlace(buffer: &buffer, width: width, height: height)
         applyLevelsInPlace(
             buffer: &buffer,
             darkCutoff: parameters.darkCutoff,

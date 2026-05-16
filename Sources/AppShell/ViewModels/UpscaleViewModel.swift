@@ -129,6 +129,9 @@ public final class UpscaleViewModel {
                         rawValue: SettingsStore.shared.despecklePreset
                     )
                     let lineArtEnhanceEnabled = SettingsStore.shared.lineArtEnhanceEnabled
+                    let lineArtEnhancePreset = LineArtEnhancePreset.from(
+                        rawValue: SettingsStore.shared.lineArtEnhancePreset
+                    )
                     var finalOutputURL = result.outputURL
                     if smartMode != .off {
                         do {
@@ -137,22 +140,23 @@ public final class UpscaleViewModel {
                                 mode: smartMode,
                                 despeckleEnabled: despeckleEnabled,
                                 despecklePreset: despecklePreset,
-                                lineArtEnhanceEnabled: lineArtEnhanceEnabled
+                                lineArtEnhanceEnabled: lineArtEnhanceEnabled,
+                                lineArtEnhancePreset: lineArtEnhancePreset
                             )
                             if smartMode == .adaptive, let picked = pr.adaptivePicked {
                                 if let renamed = Self.renameWithAdaptivePicked(
                                     url: result.outputURL,
                                     picked: picked,
                                     despecklePreset: pr.appliedDespecklePreset,
-                                    enhanced: pr.lineArtEnhanceApplied
+                                    enhancePreset: pr.appliedLineArtEnhancePreset
                                 ) {
                                     finalOutputURL = renamed
                                 }
-                            } else if pr.appliedDespecklePreset != nil || pr.lineArtEnhanceApplied {
+                            } else if pr.appliedDespecklePreset != nil || pr.appliedLineArtEnhancePreset != nil {
                                 if let renamed = Self.appendPostProcessSuffix(
                                     url: result.outputURL,
                                     despecklePreset: pr.appliedDespecklePreset,
-                                    enhanced: pr.lineArtEnhanceApplied
+                                    enhancePreset: pr.appliedLineArtEnhancePreset
                                 ) {
                                     finalOutputURL = renamed
                                 }
@@ -228,13 +232,13 @@ public final class UpscaleViewModel {
     static func appendPostProcessSuffix(
         url: URL,
         despecklePreset: DespecklePreset?,
-        enhanced: Bool
+        enhancePreset: LineArtEnhancePreset?
     ) -> URL? {
         let dir = url.deletingLastPathComponent()
         let ext = url.pathExtension
         let stem = url.deletingPathExtension().lastPathComponent
         let cleanPart = despecklePreset.map { "-clean-\($0.rawValue)" } ?? ""
-        let enhancePart = enhanced ? "-enhanced" : ""
+        let enhancePart = enhancePreset.map { "-enhanced-\($0.rawValue)" } ?? ""
         let suffix = cleanPart + enhancePart
         if suffix.isEmpty || stem.contains(suffix) { return url }
         let newStem = "\(stem)\(suffix)"
@@ -257,14 +261,14 @@ public final class UpscaleViewModel {
         url: URL,
         picked: SmartOutputMode,
         despecklePreset: DespecklePreset? = nil,
-        enhanced: Bool = false
+        enhancePreset: LineArtEnhancePreset? = nil
     ) -> URL? {
         let dir = url.deletingLastPathComponent()
         let stem = url.deletingPathExtension().lastPathComponent
         let ext = url.pathExtension
         let pickedTag = picked.filenameTag ?? "lossless"
         let cleanSuffix = despecklePreset.map { "-clean-\($0.rawValue)" } ?? ""
-        let enhanceSuffix = enhanced ? "-enhanced" : ""
+        let enhanceSuffix = enhancePreset.map { "-enhanced-\($0.rawValue)" } ?? ""
         let postSuffix = cleanSuffix + enhanceSuffix
 
         var newStem = stem

@@ -352,6 +352,9 @@ public final class BatchQueue: ObservableObject {
                 rawValue: SettingsStore.shared.despecklePreset
             )
             let lineArtEnhanceEnabled = SettingsStore.shared.lineArtEnhanceEnabled
+            let lineArtEnhancePreset = LineArtEnhancePreset.from(
+                rawValue: SettingsStore.shared.lineArtEnhancePreset
+            )
             var resolvedFinalURL = finalURL
             if smartMode != .off {
                 do {
@@ -360,26 +363,21 @@ public final class BatchQueue: ObservableObject {
                         mode: smartMode,
                         despeckleEnabled: despeckleEnabled,
                         despecklePreset: despecklePreset,
-                        lineArtEnhanceEnabled: lineArtEnhanceEnabled
+                        lineArtEnhanceEnabled: lineArtEnhanceEnabled,
+                        lineArtEnhancePreset: lineArtEnhancePreset
                     )
-                    // When .adaptive picked a concrete sub-mode, swap the
-                    // base finalURL filename tag from `adaptive` to
-                    // `adaptive-<picked>` so the on-disk name advertises
-                    // the decision.
                     if smartMode == .adaptive, let picked = pr.adaptivePicked {
                         resolvedFinalURL = Self.swapAdaptiveTag(
                             finalURL,
                             with: picked,
                             despecklePreset: pr.appliedDespecklePreset,
-                            enhanced: pr.lineArtEnhanceApplied
+                            enhancePreset: pr.appliedLineArtEnhancePreset
                         )
-                    } else if pr.appliedDespecklePreset != nil || pr.lineArtEnhanceApplied {
-                        // Manuel B/W mode + at least one post-process flag —
-                        // filename suffix ekle ki karşılaştırma collide etmesin.
+                    } else if pr.appliedDespecklePreset != nil || pr.appliedLineArtEnhancePreset != nil {
                         resolvedFinalURL = Self.appendPostProcessSuffix(
                             finalURL,
                             despecklePreset: pr.appliedDespecklePreset,
-                            enhanced: pr.lineArtEnhanceApplied
+                            enhancePreset: pr.appliedLineArtEnhancePreset
                         )
                     }
                 } catch {
@@ -467,13 +465,13 @@ public final class BatchQueue: ObservableObject {
     static func appendPostProcessSuffix(
         _ url: URL,
         despecklePreset: DespecklePreset?,
-        enhanced: Bool
+        enhancePreset: LineArtEnhancePreset?
     ) -> URL {
         let dir = url.deletingLastPathComponent()
         let ext = url.pathExtension
         let stem = url.deletingPathExtension().lastPathComponent
         let cleanPart = despecklePreset.map { "-clean-\($0.rawValue)" } ?? ""
-        let enhancePart = enhanced ? "-enhanced" : ""
+        let enhancePart = enhancePreset.map { "-enhanced-\($0.rawValue)" } ?? ""
         let suffix = cleanPart + enhancePart
         if suffix.isEmpty || stem.contains(suffix) { return url }
         let newStem = "\(stem)\(suffix)"
@@ -502,14 +500,14 @@ public final class BatchQueue: ObservableObject {
         _ url: URL,
         with picked: SmartOutputMode,
         despecklePreset: DespecklePreset? = nil,
-        enhanced: Bool = false
+        enhancePreset: LineArtEnhancePreset? = nil
     ) -> URL {
         let dir = url.deletingLastPathComponent()
         let ext = url.pathExtension
         let stem = url.deletingPathExtension().lastPathComponent
         let pickedTag = picked.filenameTag ?? "lossless"
         let cleanSuffix = despecklePreset.map { "-clean-\($0.rawValue)" } ?? ""
-        let enhancedSuffix = enhanced ? "-enhanced" : ""
+        let enhancedSuffix = enhancePreset.map { "-enhanced-\($0.rawValue)" } ?? ""
         let postSuffix = cleanSuffix + enhancedSuffix
 
         var newStem: String

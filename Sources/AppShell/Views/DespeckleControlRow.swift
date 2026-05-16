@@ -50,20 +50,51 @@ struct DespeckleControlRow: View {
                     .foregroundStyle(.tertiary)
             }
 
-            // Phase 4 (v0.3.4.0) — line art enhance toggle. Independent of
-            // despeckle; addresses halo + line clarity, not isolated dust.
-            Toggle(isOn: $settings.lineArtEnhanceEnabled) {
-                Text("Line Art Temizle (halo + line netleştirme)")
-                    .font(.callout)
+            // Phase 4 (v0.3.4.x) — line art enhance toggle + preset picker.
+            // Independent of despeckle; addresses halo + line clarity.
+            HStack(spacing: 10) {
+                Toggle(isOn: $settings.lineArtEnhanceEnabled) {
+                    Text("Line Art Temizle (halo bastırma)")
+                        .font(.callout)
+                }
+                .toggleStyle(.checkbox)
+                .disabled(smartOutputDisabled)
+
+                if settings.lineArtEnhanceEnabled && !smartOutputDisabled {
+                    Picker("", selection: enhancePresetBinding) {
+                        ForEach(LineArtEnhancePreset.allCases, id: \.self) { preset in
+                            Text(enhancePresetShortLabel(preset)).tag(preset)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 240)
+                    .labelsHidden()
+                }
+
+                Spacer()
             }
-            .toggleStyle(.checkbox)
-            .disabled(smartOutputDisabled)
 
             if !smartOutputDisabled, settings.lineArtEnhanceEnabled {
-                Text("Çizgi etrafındaki gri halo'yu temizler + çizgileri netleştirir. ~2-3 sn ek post-process.")
+                let preset = LineArtEnhancePreset.from(rawValue: settings.lineArtEnhancePreset)
+                Text(preset.hint)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
+        }
+    }
+
+    private var enhancePresetBinding: Binding<LineArtEnhancePreset> {
+        Binding(
+            get: { LineArtEnhancePreset.from(rawValue: settings.lineArtEnhancePreset) },
+            set: { settings.lineArtEnhancePreset = $0.rawValue }
+        )
+    }
+
+    private func enhancePresetShortLabel(_ p: LineArtEnhancePreset) -> String {
+        switch p {
+        case .soft:   return "Yumuşak"
+        case .normal: return "Normal"
+        case .strong: return "Agresif"
         }
     }
 

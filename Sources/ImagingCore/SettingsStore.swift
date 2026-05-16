@@ -51,12 +51,18 @@ public final class SettingsStore {
         didSet { UserDefaults.standard.set(despecklePreset, forKey: Keys.despecklePreset) }
     }
 
-    /// Phase 4 (v0.3.4.0): Line Art Enhance — median 3×3 + luminance level
-    /// mapping. Independent from despeckle; targets halo + line clarity,
-    /// not isolated dust. Default `false` (opt-in, new feature, more
-    /// invasive than despeckle).
+    /// Phase 4 (v0.3.4.0 / refined v0.3.4.1): Line Art Enhance — luminance
+    /// level mapping (median dropped in v0.3.4.1, empirically net-negative).
+    /// Independent from despeckle; targets halo bastırma, not isolated dust.
+    /// Default `false` (opt-in, customer enables when default still shows halo).
     public var lineArtEnhanceEnabled: Bool {
         didSet { UserDefaults.standard.set(lineArtEnhanceEnabled, forKey: Keys.lineArtEnhanceEnabled) }
+    }
+
+    /// Aggressiveness preset for `LineArtEnhanceFilter`. Stored as raw
+    /// string; resolve via `LineArtEnhancePreset.from(rawValue:)`.
+    public var lineArtEnhancePreset: String {
+        didSet { UserDefaults.standard.set(lineArtEnhancePreset, forKey: Keys.lineArtEnhancePreset) }
     }
 
     private enum Keys {
@@ -68,6 +74,7 @@ public final class SettingsStore {
         static let despeckleEnabled = "output.despeckleEnabled"
         static let despecklePreset = "output.despecklePreset"
         static let lineArtEnhanceEnabled = "output.lineArtEnhanceEnabled"
+        static let lineArtEnhancePreset = "output.lineArtEnhancePreset"
     }
 
     /// Public initializer — primarily for `.shared`. A custom `UserDefaults`
@@ -91,11 +98,12 @@ public final class SettingsStore {
             self.despeckleEnabled = true
         }
         self.despecklePreset = ud.string(forKey: Keys.despecklePreset) ?? "normal"
-        // Line Art Enhance: default OFF (new + more invasive than despeckle).
+        // Line Art Enhance: default OFF (opt-in).
         if ud.object(forKey: Keys.lineArtEnhanceEnabled) != nil {
             self.lineArtEnhanceEnabled = ud.bool(forKey: Keys.lineArtEnhanceEnabled)
         } else {
             self.lineArtEnhanceEnabled = false
         }
+        self.lineArtEnhancePreset = ud.string(forKey: Keys.lineArtEnhancePreset) ?? "normal"
     }
 }

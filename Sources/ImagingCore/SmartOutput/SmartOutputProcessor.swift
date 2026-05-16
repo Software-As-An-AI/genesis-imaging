@@ -43,10 +43,10 @@ public struct SmartOutputProcessor: Sendable {
         /// the on-disk filename so 3-preset A/B comparisons don't collide.
         public let appliedDespecklePreset: DespecklePreset?
 
-        /// Phase 4 (v0.3.4.0): true when Line Art Enhance ran. Used to
-        /// compose `-enhanced` filename suffix so A/B comparisons against
-        /// the non-enhanced output don't collide.
-        public let lineArtEnhanceApplied: Bool
+        /// Phase 4 (v0.3.4.0 / refined v0.3.4.1): preset that actually ran
+        /// (if line art enhance fired). `nil` when disabled or content
+        /// guard skipped. Used by callers to compose filename suffix.
+        public let appliedLineArtEnhancePreset: LineArtEnhancePreset?
 
         public var sizeRatio: Double {
             guard originalBytes > 0 else { return 1.0 }
@@ -63,7 +63,7 @@ public struct SmartOutputProcessor: Sendable {
             adaptivePicked: SmartOutputMode? = nil,
             fingerprint: ContentFingerprint? = nil,
             appliedDespecklePreset: DespecklePreset? = nil,
-            lineArtEnhanceApplied: Bool = false
+            appliedLineArtEnhancePreset: LineArtEnhancePreset? = nil
         ) {
             self.originalBytes = originalBytes
             self.finalBytes = finalBytes
@@ -74,7 +74,7 @@ public struct SmartOutputProcessor: Sendable {
             self.adaptivePicked = adaptivePicked
             self.fingerprint = fingerprint
             self.appliedDespecklePreset = appliedDespecklePreset
-            self.lineArtEnhanceApplied = lineArtEnhanceApplied
+            self.appliedLineArtEnhancePreset = appliedLineArtEnhancePreset
         }
     }
 
@@ -157,7 +157,8 @@ public struct SmartOutputProcessor: Sendable {
         mode: SmartOutputMode,
         despeckleEnabled: Bool = false,
         despecklePreset: DespecklePreset = .normal,
-        lineArtEnhanceEnabled: Bool = false
+        lineArtEnhanceEnabled: Bool = false,
+        lineArtEnhancePreset: LineArtEnhancePreset = .normal
     ) throws -> ProcessResult {
         let originalBytes = fileSize(at: url)
 
@@ -270,19 +271,20 @@ public struct SmartOutputProcessor: Sendable {
             }
         }
 
-        // Phase 4 (v0.3.4.0): Line Art Enhance — median + level mapping.
-        // Independent of despeckle. Same B/W content guard (high
-        // nearBinaryScore OR explicit B/W mode). Bypassed otherwise to
-        // avoid degrading photo content.
-        var lineArtEnhanceApplied = false
+        // Phase 4 (v0.3.4.0 / refined v0.3.4.1): Line Art Enhance — levels.
+        // Independent of despeckle. Same B/W content guard.
+        var appliedLineArtEnhancePreset: LineArtEnhancePreset? = nil
         if lineArtEnhanceEnabled && Self.shouldEnhance(
             mode: mode,
             adaptivePicked: adaptivePicked,
             fingerprint: fingerprint
         ) {
             do {
-                try LineArtEnhanceFilter.apply(url: url)
-                lineArtEnhanceApplied = true
+                try LineArtEnhanceFilter.apply(
+                    url: url,
+                    parameters: lineArtEnhancePreset.parameters
+                )
+                appliedLineArtEnhancePreset = lineArtEnhancePreset
             } catch {
                 FileHandle.standardError.write(Data(
                     "[line-art-enhance] non-fatal failure: \(error)\n".utf8
@@ -330,7 +332,7 @@ public struct SmartOutputProcessor: Sendable {
                 skipReason: "delta-guard", analysis: analysis,
                 adaptivePicked: adaptivePicked, fingerprint: fingerprint,
                 appliedDespecklePreset: appliedDespecklePreset,
-                lineArtEnhanceApplied: lineArtEnhanceApplied
+                appliedLineArtEnhancePreset: appliedLineArtEnhancePreset
             )
         }
 
