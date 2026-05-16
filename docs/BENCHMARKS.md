@@ -182,3 +182,90 @@ the user to compare results on their own content).
 - **Step 0 spike report**: [`tools/coreml-conversion/SPIKE_REPORT.md`](../tools/coreml-conversion/SPIKE_REPORT.md)
 - **CoreMLEngine implementation**: [`Sources/CoreMLEngine/CoreMLEngine.swift`](../Sources/CoreMLEngine/CoreMLEngine.swift)
 - **Compute-plan inspector**: [`Sources/CoreMLEngine/ComputePlanInspector.swift`](../Sources/CoreMLEngine/ComputePlanInspector.swift)
+
+---
+
+# Smart Output Quality Benchmark (v0.3.3.0 vs v0.3.3.1)
+
+> **Tarih:** 2026-05-16 Phuket TZ
+> **Trigger:** Operator concern — "Acaba bu son geliştirme sonrası upscale kalitesi bozulmuş gibi geliyor"
+> **Source:** `Tests/ImagingCoreTests/SmartOutput/SmartOutputQualityBenchmark.swift`
+> **Re-run:** `swift test --filter SmartOutputQualityBenchmark`
+
+## Context
+
+The despeckle filter (Smart Output Phase 3, shipped v0.3.3.0) had threshold
+defaults (10/30/100 max blob area) that destroyed character details on
+real customer content. v0.3.3.1 tuned thresholds (3/8/18) + excluded
+`.colors8` lineart path from despeckle (anti-aliasing preserves naturally).
+
+**First-order check:** engine code (`NcnnEngine`, `CoreMLEngine`,
+`ContentDetector`, `ContentFingerprint`) is **bit-identical** between
+v0.3.3.0 and v0.3.3.1. Raw upscale output unchanged. Only Smart Output
+post-process behavior shifted.
+
+## Method
+
+Synthetic 64×64 grayscale fixture composed of:
+
+| Feature | Size | Location | Role |
+|---|---|---|---|
+| Body | 20×20 = **400 px** | center-left | main character (always should preserve) |
+| Mouth | 4×5 = **20 px** | top-right | isolated small detail |
+| Eyebrow | 3×4 = **12 px** | bottom-left | smaller detail |
+| Tear | 2×3 = **6 px** | bottom-center | smallest real feature |
+| Dust 1 | 3 px cluster | top-right | noise (should clear) |
+| Dust 2 | 1 px speckle | bottom-right | noise (should clear) |
+
+Run despeckle at each preset's threshold, count surviving pixels per region.
+
+## Results
+
+| Version | Preset | Threshold | Body (×400) | Mouth (×20) | Eyebrow (×12) | Tear (×6) | Dust cleared (×4) |
+|---|---|---|---|---|---|---|---|
+| **v0.3.3.0** | Soft   | 10  | 400 ✓ | 20 ✓ | 12 ✓ | **0 ❌** | 4 ✓ |
+| **v0.3.3.0** | Normal | 30  | 400 ✓ | **0 ❌** | **0 ❌** | **0 ❌** | 4 ✓ |
+| **v0.3.3.0** | Strong | 100 | 400 ✓ | **0 ❌** | **0 ❌** | **0 ❌** | 4 ✓ |
+| **v0.3.3.1** | Soft   | 3   | 400 ✓ | 20 ✓ | 12 ✓ | **6 ✓** | 1 / 4 |
+| **v0.3.3.1** | Normal | 8   | 400 ✓ | 20 ✓ | 12 ✓ | 0 ❌ | 4 ✓ |
+| **v0.3.3.1** | Strong | 18  | 400 ✓ | 20 ✓ | 0 ❌ | 0 ❌ | 4 ✓ |
+
+## Interpretation
+
+**v0.3.3.0 Normal + Strong: practically unusable.** Mouth, eyebrow, tear
+all destroyed — only the main body blob survives. Customer report
+("Agresif olunca karakterlerin ağzı yok oldu") explained directly: 20-px
+mouth feature falls below the 30/100 thresholds.
+
+**v0.3.3.1 across all presets: monotonic improvement.**
+- *Soft (3):* most conservative — preserves all real features (including
+  6-px tear), at cost of leaving a 3-px dust cluster (cluster size = threshold).
+- *Normal (8):* sweet spot — 12+ px features preserved, 6-px tear sacrificed,
+  4/4 dust cleared.
+- *Strong (18):* aggressive — 20-px mouth preserved (was 20 < 30 in v0.3.3.0),
+  12-px eyebrow sacrificed, 4/4 dust cleared.
+
+**Engine output:** unchanged (kod git diff). The "upscale kalitesi" sensation
+the operator described is post-process algorithm, not raw upscale.
+
+## Action Items (Phase B candidates, defer)
+
+- **Soft preset dust residue:** 3-px cluster equals threshold (`< 3` strict),
+  so survives. If customer testing surfaces this as "yumuşak hâlâ kirli",
+  bump soft threshold to 4 (3-px clusters cleared, 4-px+ features preserved).
+- **Lineart path micro-despeckle:** v0.3.3.1 excludes `.colors8` from
+  despeckle entirely. If lineart output retains visible 1-px dust on
+  customer files, introduce a fixed 2-px threshold for lineart (clears
+  isolated single-pixel artifacts only, anti-aliasing untouched).
+- **Per-image override:** in batch view, allow per-row preset selection
+  for files where character feature size varies.
+
+## Customer Empirical Validation (still open)
+
+Nadezhda re-test on Comic_man11 batch with v0.3.3.1:
+- Generate 3 outputs (soft/normal/strong) on same source — filenames now
+  carry `-clean-<preset>` suffix so they don't collide.
+- Operator verdict: which preset best preserves character + cleans artifacts?
+- Tune thresholds further if needed (Phase B target: 5-10 customer files
+  per content type for statistical calibration).
+
