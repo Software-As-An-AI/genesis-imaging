@@ -258,8 +258,12 @@ struct EraserEditorView: View {
             let s = BrushStroke(points: inProgressPoints, radius: session.brushRadius)
             drawStroke(s, ctx: ctx, fitRect: fitRect, scale: scale)
         }
-        // 4. Hover preview circle (outline only).
-        if let hp = hoverPoint {
+        // 4. Brush preview outline. SwiftUI `.onContinuousHover` stops
+        // firing while a drag is active (mouse capture) — fall back to
+        // the in-progress stroke's last point so the outline follows the
+        // cursor mid-drag instead of freezing at the pre-drag hover spot.
+        let previewImagePoint: CGPoint? = inProgressPoints.last ?? hoverPoint
+        if let hp = previewImagePoint, tool == .eraser {
             let viewPoint = viewCoord(image: hp, fitRect: fitRect)
             let viewRadius = session.brushRadius * scale
             let rect = CGRect(
