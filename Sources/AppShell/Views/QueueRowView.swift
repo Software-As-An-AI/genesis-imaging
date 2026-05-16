@@ -47,6 +47,30 @@ public struct QueueRowView: View {
         }
     }
 
+    /// Edit is offered when the item has a stable file to edit: either the
+    /// completed output, or the pre-upscale source. Mid-run states get no
+    /// edit button (the file is being written to).
+    private var editAvailable: Bool {
+        switch item.state {
+        case .done:    return item.outputURL != nil
+        case .pending: return true
+        case .processing, .failed, .skipped: return false
+        }
+    }
+
+    /// Edit target: prefer the upscaled output if available; otherwise the
+    /// source. Customer can clean up either side of the upscale step.
+    private var editTargetURL: URL {
+        item.outputURL ?? item.sourceURL
+    }
+
+    private var editTooltip: String {
+        if item.outputURL != nil {
+            return "Düzenle — silgi (upscale çıktısı)"
+        }
+        return "Düzenle — silgi (upscale öncesi kaynak)"
+    }
+
     public var body: some View {
         HStack(spacing: 12) {
             thumbnailButton
@@ -98,14 +122,21 @@ public struct QueueRowView: View {
                 }
                 .buttonStyle(.iconHover)
                 .help("Finder'da göster")
+            }
 
+            // Edit button — available from the moment a source exists in
+            // the queue (pending OR done). Lets the customer clean up
+            // unwanted detail BEFORE the long upscale run, or revisit
+            // editing on the output after upscale. Disabled only mid-run
+            // (processing/failed states make in-place edits risky).
+            if editAvailable {
                 Button {
-                    presentEraserSheet(for: outURL)
+                    presentEraserSheet(for: editTargetURL)
                 } label: {
                     Image(systemName: "pencil.tip.crop.circle")
                 }
                 .buttonStyle(.iconHover)
-                .help("Düzenle — Eraser brush")
+                .help(editTooltip)
             }
 
             Button {

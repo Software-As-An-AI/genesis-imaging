@@ -205,11 +205,25 @@ public struct MainView: View {
 
                 Spacer()
 
+                if let src = viewModel.inputURL, !isRunning {
+                    Button {
+                        presentEraserSheet(for: src)
+                    } label: {
+                        Label("Düzenle", systemImage: "pencil.tip.crop.circle")
+                    }
+                    .help("Upscale öncesi kaynağı silgiyle temizle")
+                }
+
                 actionButton
             }
 
             DespeckleControlRow()
         }
+    }
+
+    private var isRunning: Bool {
+        if case .running = viewModel.state { return true }
+        return false
     }
 
     private var actionButton: some View {
