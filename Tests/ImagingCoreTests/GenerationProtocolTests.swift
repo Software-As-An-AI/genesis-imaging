@@ -55,6 +55,29 @@ final class GenerationProtocolTests: XCTestCase {
         }))
     }
 
+    /// Regression for v0.4.1.3 size-picker bug: ForEach keyed on width alone
+    /// rendered "Kare S | Kare M | Kare M | Yatay" because (1024,1024) and
+    /// (1024,1536) shared a width id. The picker now keys by index, but this
+    /// asserts the contract every supported size produces a distinct label so
+    /// future supportedSizes additions don't silently collide.
+    func testDefaults_shortSizeLabelsAreUnique() {
+        let labels = GenerationDefaults.supportedSizes.map {
+            GenerationDefaults.shortSizeLabel(width: $0.0, height: $0.1)
+        }
+        XCTAssertEqual(labels.count, Set(labels).count,
+                       "supportedSizes must map to unique short labels (got \(labels))")
+    }
+
+    /// Pins the semantic labels to their canonical (w, h) pairs so a future
+    /// refactor of shortSizeLabel can't silently swap "Dikey" / "Yatay" or
+    /// reintroduce duplicate "Kare M" entries.
+    func testDefaults_shortSizeLabelsSemantic() {
+        XCTAssertEqual(GenerationDefaults.shortSizeLabel(width: 768,  height: 768),  "Kare S")
+        XCTAssertEqual(GenerationDefaults.shortSizeLabel(width: 1024, height: 1024), "Kare M")
+        XCTAssertEqual(GenerationDefaults.shortSizeLabel(width: 1024, height: 1536), "Dikey")
+        XCTAssertEqual(GenerationDefaults.shortSizeLabel(width: 1536, height: 1024), "Yatay")
+    }
+
     func testDefaults_modelNameNotEmpty() {
         XCTAssertFalse(GenerationDefaults.modelName.isEmpty)
     }

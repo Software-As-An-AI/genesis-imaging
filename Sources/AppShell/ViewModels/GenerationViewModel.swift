@@ -24,8 +24,8 @@ public final class GenerationViewModel {
         case failed(String)
     }
 
-    public var prompt: String = "A coloring book page of a fox in a forest, simple line art, black outline, no shading"
-    public var negativePrompt: String = "color, gradient, watercolor, photo, realistic, complex shading"
+    public var prompt: String = "A coloring book page of a fox in a forest, simple bold line art, thick black outline, white background, minimal detail, kid-friendly, high contrast, vector style, clean illustration"
+    public var negativePrompt: String = "color, gradient, shading, watercolor, photo, realistic, complex background, dense vegetation, intricate detail, hatching, grayscale, texture"
     public var steps: Int
     public var cfgScale: Double
     public var width: Int

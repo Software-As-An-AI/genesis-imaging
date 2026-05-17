@@ -142,7 +142,13 @@ struct GenerateView: View {
                     .font(.callout)
                     .frame(width: 70, alignment: .leading)
                 Picker("", selection: sizeBinding) {
-                    ForEach(GenerationDefaults.supportedSizes, id: \.0) { (w, h) in
+                    // Iterate by index to avoid an id collision when two sizes
+                    // share a width (1024×1024 vs 1024×1536). v0.4.1.3 bug
+                    // surfaced as "Kare S | Kare M | Kare M | Yatay" because
+                    // ForEach(_, id: \.0) keyed on width alone.
+                    ForEach(Array(GenerationDefaults.supportedSizes.enumerated()),
+                            id: \.offset) { _, pair in
+                        let (w, h) = pair
                         Text(GenerationDefaults.shortSizeLabel(width: w, height: h))
                             .tag(GenerationDefaults.sizeTag(width: w, height: h))
                     }
