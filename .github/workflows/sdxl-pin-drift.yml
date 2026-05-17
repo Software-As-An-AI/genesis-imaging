@@ -1,0 +1,76 @@
+name: SDXL Pin Drift Check
+
+# Weekly check that Apple's published SDXL Core ML bundle on HF hasn't been
+# re-uploaded with a different SHA256 — would silently break our pinned download
+# in ModelDownloadManager.
+#
+# Reference: docs/plans/2026-05-17-genesis-imaging-phase-a2-sdxl-real-pipeline.md §2.3
+#
+# Security note: this workflow does not interpolate any github.event.*
+# untrusted inputs into shell commands; only the github-script step uses
+# repo context (owner/repo/runId), all safe.
+
+on:
+  schedule:
+    # Sundays 02:17 UTC (off-peak; doesn't collide with CI release cadence)
+    - cron: '17 2 * * 0'
+  workflow_dispatch:    # manual trigger from GitHub UI when needed
+
+permissions:
+  contents: read
+  issues: write          # so this can open an issue on drift
+
+jobs:
+  verify-pin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify SDXL bundle pin
+        id: verify
+        run: bash scripts/fetch-sdxl-coreml-model.sh verify
+
+      - name: Open issue on drift
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = '[sdxl-pin-drift] Apple SDXL bundle SHA256 changed upstream';
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'sdxl-pin-drift'
+            });
+            if (existing.data.some(i => i.title === title)) {
+              core.info('Drift issue already open — skipping create');
+              return;
+            }
+            const body = [
+              'Weekly drift check failed — `scripts/fetch-sdxl-coreml-model.sh verify` exit non-zero.',
+              '',
+              'Likely causes:',
+              '- Apple re-uploaded the bundle (model update / license change)',
+              '- HF moved the file path',
+              '- HF outage (transient — re-run the workflow before acting)',
+              '',
+              'Action:',
+              '1. Re-run this workflow manually to rule out transient HF outage.',
+              '2. If still failing, run `bash scripts/fetch-sdxl-coreml-model.sh` locally — capture the new SHA256 + size.',
+              '3. Update EXPECTED_SHA256 in `scripts/fetch-sdxl-coreml-model.sh` AND',
+              '   `SDXLModelCatalog.swift` `sha256` field (added in Step 2 of Phase A.2 plan).',
+              '4. Verify Apple HF repo README for model version notes — `versionMarker` may also need bump.',
+              '5. Smoke test: re-download bundle in dev (`./scripts/fetch-sdxl-coreml-model.sh --download`) + run app gen smoke.',
+              '',
+              'Reference: `docs/plans/2026-05-17-genesis-imaging-phase-a2-sdxl-real-pipeline.md` §2.3',
+              '',
+              'Workflow run: ' + context.serverUrl + '/' + context.repo.owner + '/' + context.repo.repo + '/actions/runs/' + context.runId
+            ].join('\n');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              labels: ['sdxl-pin-drift', 'phase-a2'],
+              body: body
+            });

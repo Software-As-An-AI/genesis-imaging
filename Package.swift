@@ -18,6 +18,13 @@ let package = Package(
         // sandbox). Cross-edition reuse seed: future Mac native edition'lar
         // aynı SPM dep'i kullanır.
         .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.6.4"),
+        // Apple ml-stable-diffusion — Phase A.2 SDXL inference pipeline.
+        // Brings `StableDiffusionXLPipeline` (text encoder + UNet loop + VAE
+        // decode) with progressHandler callback that bridges 1:1 to our
+        // `GenerationProgress.step(current:total:)`. Transitive dep:
+        // swift-transformers 0.1.8 exact-pinned upstream.
+        // min macOS .v13 (we ship .v14, compatible). Swift 5.8 toolchain.
+        .package(url: "https://github.com/apple/ml-stable-diffusion", from: "1.1.1"),
     ],
     targets: [
         .target(
@@ -30,7 +37,10 @@ let package = Package(
         ),
         .target(
             name: "CoreMLEngine",
-            dependencies: ["ImagingCore"],
+            dependencies: [
+                "ImagingCore",
+                .product(name: "StableDiffusion", package: "ml-stable-diffusion"),
+            ],
             linkerSettings: [
                 .linkedFramework("CoreML"),
                 .linkedFramework("Vision"),
