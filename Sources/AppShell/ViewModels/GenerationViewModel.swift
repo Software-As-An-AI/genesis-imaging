@@ -15,6 +15,10 @@ import CoreMLEngine
 public final class GenerationViewModel {
     public enum State: Equatable {
         case idle
+        /// Engine spinning up — pipeline init + loadResources. First launch
+        /// can take 30-120 s while ML compilation happens. No step counter
+        /// available yet (UNet loop hasn't started).
+        case loading
         case running(step: Int, total: Int)
         case completed(URL, seed: UInt32)
         case failed(String)
@@ -44,8 +48,10 @@ public final class GenerationViewModel {
     }
 
     public var isRunning: Bool {
-        if case .running = state { return true }
-        return false
+        switch state {
+        case .running, .loading: return true
+        default: return false
+        }
     }
 
     public func start() {
@@ -60,7 +66,7 @@ public final class GenerationViewModel {
             width: width,
             height: height
         )
-        state = .running(step: 0, total: steps)
+        state = .loading
         let engine = StableDiffusionCoreMLEngine()
         engineName = engine.engineName
 
@@ -86,7 +92,9 @@ public final class GenerationViewModel {
     private func handle(event: GenerationProgress, request: GenerationRequest) async {
         switch event {
         case .started:
-            state = .running(step: 0, total: request.steps)
+            // Keep `.loading` — engine emits .started before loadResources;
+            // first .step event will transition us to .running.
+            if case .loading = state {} else { state = .loading }
         case .step(let current, let total):
             state = .running(step: current, total: total)
         case .completed(let result):

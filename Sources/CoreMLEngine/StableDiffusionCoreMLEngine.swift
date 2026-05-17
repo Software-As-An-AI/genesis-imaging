@@ -22,9 +22,12 @@ import ImagingCore
 ///     memory + avoids "all-black frame" surprise)
 ///   - `schedulerType = .dpmSolverMultistepScheduler` + Karras spacing
 ///     (community consensus for SDXL quality at 20-30 steps)
-///   - `MLComputeUnits.cpuAndNeuralEngine` (Apple's recommendation for
-///     palettized bundle; pipeline internally swaps VAE decoder to .cpuAndGPU
-///     because ANE doesn't handle FP32)
+///   - `MLComputeUnits.cpuAndGPU` (Apple's `ml-stable-diffusion` README's
+///     macOS recommendation for SDXL — ANE compile of SDXL UNet is
+///     prohibitively slow on first launch (operator observed 8+ min
+///     `ANECompilerService` at 90% CPU on M4 Pro), and several UNet ops
+///     don't run on ANE anyway. v0.4.1.1 tried `.cpuAndNeuralEngine` → hung
+///     UX during compile. v0.4.1.2 swap → fast load, similar throughput.)
 ///   - `reduceMemory: true` (M4 Pro 16 GB headroom for parallel Real-ESRGAN)
 ///
 /// Output is fixed 1024×1024 per Apple's bundle geometry; UI may request
@@ -111,7 +114,7 @@ public struct StableDiffusionCoreMLEngine: GenerationEngine {
         let startedAt = Date()
 
         let mlConfig = MLModelConfiguration()
-        mlConfig.computeUnits = .cpuAndNeuralEngine
+        mlConfig.computeUnits = .cpuAndGPU
 
         let pipeline: StableDiffusionXLPipeline
         do {

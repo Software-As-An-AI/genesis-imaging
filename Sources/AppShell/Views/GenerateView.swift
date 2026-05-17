@@ -210,6 +210,19 @@ struct GenerateView: View {
         switch viewModel.state {
         case .idle:
             EmptyView()
+        case .loading:
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Model belleğe yükleniyor…")
+                        .font(.callout)
+                }
+                Text("İlk üretim için 30 sn - 2 dk arası beklemeyi göze al (Core ML model warm-up). Sonraki üretimler hızlı olacak.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         case .running(let step, let total):
             VStack(alignment: .leading, spacing: 6) {
                 ProgressView(value: Double(step), total: Double(total))
