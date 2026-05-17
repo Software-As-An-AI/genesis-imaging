@@ -32,11 +32,29 @@ public enum SDXLModelCatalog {
         /// additional plumbing for macOS use). Not currently exposed.
         case iosSplitEinsum
 
+        /// Phase A.3 — SDXL base with artificialguybr/ColoringBookRedmond-V2
+        /// LoRA fused at scale 1.0, converted via Apple's torch2coreml.
+        /// Domain-specific bundle for Nadezhda's coloring-book workflow;
+        /// dramatically tighter line-art aesthetic vs base SDXL prompting
+        /// (proven by local smoke test 2026-05-17).
+        case loraColoring
+
         public var humanLabel: String {
             switch self {
-            case .palettized:     return "Palettized (önerilen)"
+            case .palettized:     return "Apple Base SDXL"
             case .base:           return "Base (yedek)"
             case .iosSplitEinsum: return "iOS split-einsum"
+            case .loraColoring:   return "Çocuk Boyama Kitabı (LoRA)"
+            }
+        }
+
+        /// Whether the variant is offered to the customer in Settings'
+        /// Görüntü Oluşturma picker. `.base` / `.iosSplitEinsum` are
+        /// developer fallbacks only.
+        public var isUserSelectable: Bool {
+            switch self {
+            case .palettized, .loraColoring:    return true
+            case .base, .iosSplitEinsum:        return false
             }
         }
 
@@ -57,6 +75,15 @@ public enum SDXLModelCatalog {
                     "https://huggingface.co/apple/coreml-stable-diffusion-xl-base-ios/" +
                     "resolve/main/coreml-stable-diffusion-xl-base-ios_split_einsum_compiled.zip"
                 )!
+            case .loraColoring:
+                // Phase A.3: hosted on our own infrastructure (gns-gate-01
+                // Caddy under apps.softwareasan.ai). R2 mirror exists at
+                // software-as-an-ai-models bucket as fallback (manual flip
+                // in future v0.5.x if vps.tc bandwidth becomes a constraint).
+                return URL(string:
+                    "https://apps.softwareasan.ai/genesis-imaging/models/" +
+                    "sdxl-coloring-book-lora-v1.zip"
+                )!
             }
         }
 
@@ -67,6 +94,8 @@ public enum SDXLModelCatalog {
             switch self {
             case .palettized:
                 return "a00f335d990588c97c347d97f7e92080f8cb23342c454f4a4d853a59bea1e2b5"
+            case .loraColoring:
+                return "c676295a9492f84455abca80355c116f41c5eac0d47f8c8a18a88c03c695f136"
             case .base, .iosSplitEinsum:
                 return nil
             }
@@ -75,6 +104,7 @@ public enum SDXLModelCatalog {
         public var expectedSizeBytes: Int64 {
             switch self {
             case .palettized:     return 6_711_666_087
+            case .loraColoring:   return 6_432_524_320
             case .base:           return 7_040_000_000 // approximate; pin before activation
             case .iosSplitEinsum: return 3_050_000_000 // approximate; pin before activation
             }
@@ -88,22 +118,38 @@ public enum SDXLModelCatalog {
             case .palettized:     return "palettized-1.0-apple-2023-07"
             case .base:           return "base-1.0-apple-2023-07"
             case .iosSplitEinsum: return "iossplit-1.0-apple-2023-07"
+            case .loraColoring:   return "loracoloring-v1-coloringbookredmond-v2-2026-05"
             }
         }
 
         /// File or directory names that must exist inside the extracted bundle
         /// before `isInstalled()` returns true. Apple's casing (`VAEDecoder`,
         /// not `VaeDecoder`); tokenizer files required by `StableDiffusion`
-        /// package's text encoder load path.
+        /// package's text encoder load path. LoRA variant adds VAEEncoder
+        /// because we converted with `--convert-vae-encoder` for future
+        /// img2img workflow (eraser-driven inpainting).
         public var requiredEntries: [String] {
-            [
-                "TextEncoder.mlmodelc",
-                "TextEncoder2.mlmodelc",
-                "Unet.mlmodelc",
-                "VAEDecoder.mlmodelc",
-                "vocab.json",
-                "merges.txt",
-            ]
+            switch self {
+            case .palettized, .base, .iosSplitEinsum:
+                return [
+                    "TextEncoder.mlmodelc",
+                    "TextEncoder2.mlmodelc",
+                    "Unet.mlmodelc",
+                    "VAEDecoder.mlmodelc",
+                    "vocab.json",
+                    "merges.txt",
+                ]
+            case .loraColoring:
+                return [
+                    "TextEncoder.mlmodelc",
+                    "TextEncoder2.mlmodelc",
+                    "Unet.mlmodelc",
+                    "VAEDecoder.mlmodelc",
+                    "VAEEncoder.mlmodelc",
+                    "vocab.json",
+                    "merges.txt",
+                ]
+            }
         }
 
         /// Relative path from the extraction destination root to the
@@ -131,6 +177,39 @@ public enum SDXLModelCatalog {
                 return "coreml-stable-diffusion-xl-base_original_compiled/compiled"
             case .iosSplitEinsum:
                 return "coreml-stable-diffusion-xl-base-ios_split_einsum_compiled/compiled"
+            case .loraColoring:
+                return "coreml-stable-diffusion-xl-coloring-book_compiled/compiled"
+            }
+        }
+
+        /// Default prompt seeded into GenerationViewModel when the variant is
+        /// active. User can edit freely; this is just the initial value.
+        ///
+        /// The LoRA variant prepends the trigger words `ColoringBookAF, Coloring
+        /// Book` per the CivitAI model card — they activate the LoRA's coloring
+        /// book aesthetic strongly. If the user removes the triggers, the LoRA
+        /// effect weakens but generation still works.
+        public var defaultPrompt: String {
+            switch self {
+            case .palettized, .base, .iosSplitEinsum:
+                return "A coloring book page of a fox in a forest, simple bold line art, "
+                     + "thick black outline, white background, minimal detail, kid-friendly, "
+                     + "vector style, clean illustration"
+            case .loraColoring:
+                return "ColoringBookAF, Coloring Book, a coloring book page of a fox in a forest, "
+                     + "simple bold line art, thick black outline, white background, "
+                     + "minimal detail, kid-friendly, clean illustration"
+            }
+        }
+
+        /// Default negative prompt seeded into GenerationViewModel for this
+        /// variant. Same as positive: user can override freely.
+        public var defaultNegativePrompt: String {
+            switch self {
+            case .palettized, .base, .iosSplitEinsum, .loraColoring:
+                return "color, gradient, shading, watercolor, photo, realistic, "
+                     + "complex background, dense vegetation, intricate detail, "
+                     + "hatching, grayscale, texture"
             }
         }
     }
