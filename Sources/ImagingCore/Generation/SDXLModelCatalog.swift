@@ -105,5 +105,33 @@ public enum SDXLModelCatalog {
                 "merges.txt",
             ]
         }
+
+        /// Relative path from the extraction destination root to the
+        /// directory that actually contains `requiredEntries`. Apple's zip
+        /// archives nest files inside their own folder hierarchy — for the
+        /// palettized variant unzip produces:
+        ///
+        ///   <dest>/
+        ///   └── coreml-stable-diffusion-mixed-bit-palettization_original_compiled/
+        ///       └── compiled/
+        ///           ├── TextEncoder.mlmodelc
+        ///           ├── … etc.
+        ///
+        /// `StableDiffusionXLPipeline(resourcesAt:)` and `isInstalled()` must
+        /// point at the inner `compiled/` directory, not the extraction root.
+        /// (v0.4.1.0 ship had this wrong — model extracted but pipeline +
+        /// presence check looked at root → "modelNotInstalled" surfaced
+        /// despite Settings showing the cached optimistic "Model yüklü" row.
+        /// Fixed in v0.4.1.1.)
+        public var resourcesSubpath: String {
+            switch self {
+            case .palettized:
+                return "coreml-stable-diffusion-mixed-bit-palettization_original_compiled/compiled"
+            case .base:
+                return "coreml-stable-diffusion-xl-base_original_compiled/compiled"
+            case .iosSplitEinsum:
+                return "coreml-stable-diffusion-xl-base-ios_split_einsum_compiled/compiled"
+            }
+        }
     }
 }

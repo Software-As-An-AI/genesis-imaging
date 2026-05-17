@@ -72,7 +72,7 @@ public struct StableDiffusionCoreMLEngine: GenerationEngine {
                 if let override {
                     bundleURL = override
                 } else {
-                    bundleURL = await MainActor.run { ModelDownloadManager.shared.bundleDirectory }
+                    bundleURL = await MainActor.run { ModelDownloadManager.shared.resourcesDirectory }
                 }
 
                 do {

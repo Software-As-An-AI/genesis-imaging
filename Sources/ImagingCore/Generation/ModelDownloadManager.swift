@@ -51,8 +51,18 @@ public final class ModelDownloadManager {
 
     /// Bundle root directory. Lives under user-domain Application Support so
     /// users can inspect / delete via Finder if needed (Settings exposes a
-    /// "Reveal in Finder" affordance).
+    /// "Reveal in Finder" affordance). The actual `.mlmodelc` directories
+    /// live one or two levels deeper (Apple's zips archive their own folder
+    /// structure) — see `resourcesDirectory`.
     public let bundleDirectory: URL = ModelDownloadManager.defaultBundleDirectory()
+
+    /// Directory that contains the `.mlmodelc` resources `StableDiffusion`
+    /// package expects. Computed from `bundleDirectory` + variant's
+    /// `resourcesSubpath`. This is the URL to hand to
+    /// `StableDiffusionXLPipeline(resourcesAt:)`.
+    public var resourcesDirectory: URL {
+        bundleDirectory.appendingPathComponent(variant.resourcesSubpath, isDirectory: true)
+    }
 
     private static func defaultBundleDirectory() -> URL {
         let fm = FileManager.default
@@ -75,7 +85,9 @@ public final class ModelDownloadManager {
     // MARK: - Presence
 
     /// `true` if the bundle directory contains the expected version marker
-    /// AND every required entry from `SDXLModelCatalog.Variant.requiredEntries`.
+    /// AND every required entry from `SDXLModelCatalog.Variant.requiredEntries`
+    /// (checked under `resourcesDirectory`, not the raw extraction root —
+    /// Apple zips nest one or two folders deep).
     /// Used at app launch + before every generation attempt.
     public func isInstalled() -> Bool {
         let marker = bundleDirectory.appendingPathComponent(".sdxl-version")
@@ -84,9 +96,10 @@ public final class ModelDownloadManager {
         else { return false }
         guard stored.trimmingCharacters(in: .whitespacesAndNewlines) == expectedVersion
         else { return false }
+        let resources = resourcesDirectory
         return variant.requiredEntries.allSatisfy { entry in
             FileManager.default.fileExists(
-                atPath: bundleDirectory.appendingPathComponent(entry).path
+                atPath: resources.appendingPathComponent(entry).path
             )
         }
     }
@@ -191,11 +204,23 @@ public final class ModelDownloadManager {
             // Cleanup staging zip
             try? FileManager.default.removeItem(at: zipURL)
 
-            await MainActor.run {
-                self.phase = .ready
-                SettingsStore.shared.sdModelAvailable = true
-                self.activeDownloader?.cleanup()
-                self.activeDownloader = nil
+            // Trust isInstalled() — not optimistic. Catches structural
+            // mismatches (e.g. archive layout drift, missing tokenizer)
+            // instead of advertising .ready and failing at first inference.
+            let trulyInstalled = await MainActor.run { self.isInstalled() }
+            if trulyInstalled {
+                await MainActor.run {
+                    self.phase = .ready
+                    SettingsStore.shared.sdModelAvailable = true
+                    self.activeDownloader?.cleanup()
+                    self.activeDownloader = nil
+                }
+            } else {
+                await MainActor.run {
+                    self.phase = .failed(message: "Arşiv açıldı ama beklenen dosyalar bulunamadı — bundle yapısı değişmiş olabilir. Kaldır + tekrar indir denemeden destek isteyin.")
+                    SettingsStore.shared.sdModelAvailable = false
+                    self.activeDownloader = nil
+                }
             }
         } catch {
             let message: String = {
