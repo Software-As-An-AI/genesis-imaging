@@ -63,6 +63,39 @@ public struct MainView: View {
             Divider()
             sectionContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Divider()
+            globalFooter
+                .padding(.horizontal, 20)
+                .padding(.vertical, 6)
+        }
+    }
+
+    /// Global build-provenance footer — visible on every section. Replaces
+    /// the per-section version display so the customer always knows which
+    /// build they're testing (operator dev-cycle: "v0.4.1.2 mu daha eski mi?"
+    /// — fast visual answer at the bottom edge regardless of tab).
+    private var globalFooter: some View {
+        HStack(spacing: 8) {
+            if !VersionStamp.isRelease {
+                Text("DEV")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Color.yellow)
+                    .cornerRadius(3)
+                    .help("Lokal dev build — \(VersionStamp.summary)")
+            }
+            Text(VersionStamp.summary)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.tertiary)
+                .help("Build provenance — \(VersionStamp.buildDate)")
+            Spacer()
+            if activeSection == .upscale {
+                Text("Engine: \(viewModel.engineName)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 
@@ -418,27 +451,12 @@ public struct MainView: View {
         }
     }
 
+    /// Inner upscale-section footer is now empty — version + engine moved up
+    /// to MainView's globalFooter so they render across all sections. Keeping
+    /// the slot lets us add upscale-section-specific status here later
+    /// (e.g. queue depth, tile cache size) without re-plumbing.
     private var footer: some View {
-        HStack(spacing: 8) {
-            Text("Engine: \(viewModel.engineName)")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-            Spacer()
-            if !VersionStamp.isRelease {
-                Text("DEV")
-                    .font(.caption2.bold())
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Color.yellow)
-                    .cornerRadius(3)
-                    .help("Lokal dev build — \(VersionStamp.summary)")
-            }
-            Text(VersionStamp.summary)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .help("Build provenance — \(VersionStamp.buildDate)")
-        }
+        EmptyView()
     }
 
     // MARK: - Helpers
