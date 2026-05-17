@@ -14,6 +14,7 @@ struct GenerateView: View {
     @State private var viewModel = GenerationViewModel()
     @Bindable private var settings = SettingsStore.shared
     @State private var manager = ModelDownloadManager.shared
+    @State private var showDownloadSheet: Bool = false
 
     /// Optional handoff closures provided by the parent (MainView). When
     /// the customer taps "Upscale'e gönder" or "Düzenle", MainView
@@ -37,6 +38,9 @@ struct GenerateView: View {
             .padding(20)
         }
         .background(Color(NSColor.windowBackgroundColor))
+        .sheet(isPresented: $showDownloadSheet) {
+            ModelDownloadProgressView(isPresented: $showDownloadSheet)
+        }
     }
 
     // MARK: - Banner
@@ -51,16 +55,19 @@ struct GenerateView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("SDXL modeli yüklü değil")
                         .font(.callout.weight(.semibold))
-                    Text("Görüntü oluşturma için ~5.4 GB SDXL + Line-Art LoRA modeli indirilmeli. İndirme bir kez yapılır, sonraki açılışlarda gerek yok.")
+                    Text("Görüntü oluşturma için Apple Core ML SDXL bundle'ı (~6.7 GB) indirilmeli. İndirme bir kez yapılır, sonraki açılışlarda gerek yok.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
-                SettingsLink {
-                    Text("Ayarlar'a git")
+                Button {
+                    showDownloadSheet = true
+                    Task { await manager.startDownload() }
+                } label: {
+                    Label("İndir", systemImage: "arrow.down.circle")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
             }
             .padding(10)
             .background(Color.orange.opacity(0.12))

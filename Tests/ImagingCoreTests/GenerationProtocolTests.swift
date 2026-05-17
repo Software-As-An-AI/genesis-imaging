@@ -107,8 +107,8 @@ final class ModelDownloadManagerScaffoldTests: XCTestCase {
         switch phase {
         case .idle, .ready, .failed:
             XCTAssertTrue(true)  // valid post-init phases
-        case .downloading, .compiling:
-            XCTFail("Manager should not be downloading/compiling at init")
+        case .downloading, .verifying, .extracting:
+            XCTFail("Manager should not be downloading/verifying/extracting at init")
         }
     }
 

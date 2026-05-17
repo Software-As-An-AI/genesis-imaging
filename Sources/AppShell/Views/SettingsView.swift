@@ -4,6 +4,7 @@ import ImagingCore
 @MainActor
 public struct SettingsView: View {
     @Bindable private var settings = SettingsStore.shared
+    @State private var showDownloadSheet: Bool = false
 
     private let modelOptions = [
         "realesrgan-x4plus",
@@ -131,6 +132,9 @@ public struct SettingsView: View {
         .formStyle(.grouped)
         .navigationTitle("Ayarlar")
         .frame(minWidth: 480, minHeight: 420)
+        .sheet(isPresented: $showDownloadSheet) {
+            ModelDownloadProgressView(isPresented: $showDownloadSheet)
+        }
     }
 
     private var appVersion: String {
@@ -150,10 +154,13 @@ public struct SettingsView: View {
         switch manager.phase {
         case .ready:
             installedRow(manager)
-        case .downloading(let progress, let eta):
-            downloadingRow(progress: progress, eta: eta, manager: manager)
-        case .compiling:
-            compilingRow()
+        case .downloading(let bytes, let total, let throughput, let eta):
+            downloadingRow(bytes: bytes, total: total, throughput: throughput,
+                           eta: eta, manager: manager)
+        case .verifying:
+            phaseSpinnerRow(label: "Bütünlük doğrulanıyor (SHA256)…")
+        case .extracting:
+            phaseSpinnerRow(label: "Model arşivi açılıyor…")
         case .failed(let message):
             failedRow(message: message, manager: manager)
         case .idle:
@@ -189,9 +196,10 @@ public struct SettingsView: View {
             HStack {
                 Image(systemName: "arrow.down.circle.dotted")
                     .foregroundStyle(.orange)
-                Text("Model yüklü değil — ~5.4 GB indirilecek")
+                Text("Model yüklü değil — ~6.7 GB indirilecek")
                 Spacer()
                 Button("İndir") {
+                    showDownloadSheet = true
                     Task { await manager.startDownload() }
                 }
                 .buttonStyle(.borderedProminent)
@@ -204,8 +212,10 @@ public struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func downloadingRow(progress: Double, eta: Int?, manager: ModelDownloadManager) -> some View {
+    private func downloadingRow(bytes: Int64, total: Int64, throughput: Double?,
+                                eta: Int?, manager: ModelDownloadManager) -> some View {
         VStack(alignment: .leading, spacing: 6) {
+            let progress = total > 0 ? Double(bytes) / Double(total) : 0
             HStack {
                 ProgressView(value: progress)
                 Text(String(format: "%.0f%%", progress * 100))
@@ -215,26 +225,45 @@ public struct SettingsView: View {
                     manager.cancelDownload()
                 }
             }
-            if let eta = eta {
-                Text("Yaklaşık \(eta) sn kaldı")
-                    .font(.caption2)
+            HStack(spacing: 8) {
+                Text(byteCount(bytes) + " / " + byteCount(total))
+                    .font(.caption2.monospacedDigit())
                     .foregroundStyle(.tertiary)
-            } else {
-                Text("İndiriliyor…")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                if let bps = throughput {
+                    Text("· " + byteCount(Int64(bps)) + "/s")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+                if let eta = eta {
+                    Text("· " + etaLabel(eta))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
             }
         }
     }
 
     @ViewBuilder
-    private func compilingRow() -> some View {
+    private func phaseSpinnerRow(label: String) -> some View {
         HStack(spacing: 8) {
             ProgressView()
                 .controlSize(.small)
-            Text("Model derleniyor (xcrun coremlcompiler)…")
+            Text(label)
                 .font(.callout)
         }
+    }
+
+    private func byteCount(_ b: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: b, countStyle: .file)
+    }
+
+    private func etaLabel(_ seconds: Int) -> String {
+        if seconds < 60 { return "~\(seconds) sn kaldı" }
+        let m = seconds / 60
+        let s = seconds % 60
+        if s == 0 { return "~\(m) dk kaldı" }
+        return "~\(m) dk \(s) sn kaldı"
     }
 
     @ViewBuilder
@@ -244,17 +273,19 @@ public struct SettingsView: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("İndirme şu an mümkün değil")
+                    Text("İndirme başarısız oldu")
                         .font(.callout.weight(.semibold))
                     Text(message)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
                 }
                 Spacer()
             }
             HStack {
                 Button("Tekrar dene") {
+                    showDownloadSheet = true
                     Task { await manager.startDownload() }
                 }
                 Button("Sıfırla") {
