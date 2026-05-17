@@ -46,8 +46,13 @@ public struct StableDiffusionCoreMLEngine: GenerationEngine {
     }
 
     public func probe() async throws -> EngineHealth {
-        let installed = await MainActor.run { ModelDownloadManager.shared.isInstalled() }
-        let version = await MainActor.run { ModelDownloadManager.shared.expectedVersion }
+        let (installed, version) = await MainActor.run {
+            let v = SettingsStore.shared.sdxlModelVariantTyped
+            return (
+                ModelDownloadManager.shared.isInstalled(for: v),
+                v.versionMarker
+            )
+        }
         return EngineHealth(
             isAvailable: installed,
             version: installed ? version : "model-not-installed",
@@ -61,8 +66,12 @@ public struct StableDiffusionCoreMLEngine: GenerationEngine {
             Task.detached {
                 continuation.yield(.started)
 
-                let installed = await MainActor.run {
-                    ModelDownloadManager.shared.isInstalled()
+                let (installed, variantBundleURL) = await MainActor.run {
+                    let v = SettingsStore.shared.sdxlModelVariantTyped
+                    return (
+                        ModelDownloadManager.shared.isInstalled(for: v),
+                        ModelDownloadManager.shared.resourcesDirectory(for: v)
+                    )
                 }
                 guard installed else {
                     let err = GenerationError.modelNotInstalled
@@ -71,12 +80,7 @@ public struct StableDiffusionCoreMLEngine: GenerationEngine {
                     return
                 }
 
-                let bundleURL: URL
-                if let override {
-                    bundleURL = override
-                } else {
-                    bundleURL = await MainActor.run { ModelDownloadManager.shared.resourcesDirectory }
-                }
+                let bundleURL: URL = override ?? variantBundleURL
 
                 do {
                     let result = try Self.runInference(

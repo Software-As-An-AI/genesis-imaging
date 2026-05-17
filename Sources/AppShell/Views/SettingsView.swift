@@ -164,7 +164,7 @@ public struct SettingsView: View {
         case .failed(let message):
             failedRow(message: message, manager: manager)
         case .idle:
-            if settings.sdModelAvailable {
+            if manager.isInstalled(for: settings.sdxlModelVariantTyped) {
                 installedRow(manager)
             } else {
                 idleRow(manager)

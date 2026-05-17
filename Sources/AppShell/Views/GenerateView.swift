@@ -47,7 +47,7 @@ struct GenerateView: View {
 
     @ViewBuilder
     private var modelStatusBanner: some View {
-        if !settings.sdModelAvailable {
+        if !manager.isInstalled(for: settings.sdxlModelVariantTyped) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "arrow.down.circle.dotted")
                     .foregroundStyle(.orange)
@@ -203,7 +203,7 @@ struct GenerateView: View {
                 }
                 .keyboardShortcut(.return, modifiers: .command)
                 .buttonStyle(.borderedProminent)
-                .disabled(!settings.sdModelAvailable || viewModel.prompt.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(!manager.isInstalled(for: settings.sdxlModelVariantTyped) || viewModel.prompt.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             Spacer()
         }

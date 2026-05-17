@@ -83,12 +83,30 @@ public final class SettingsStore {
         didSet { UserDefaults.standard.set(defaultGenerationSize, forKey: Keys.defaultGenerationSize) }
     }
 
-    /// True after `ModelDownloadManager` confirms the SDXL bundle is on
-    /// disk + compiled. Cached so the Generate view can disable itself
-    /// without re-checking on every render.
-    public var sdModelAvailable: Bool {
-        didSet { UserDefaults.standard.set(sdModelAvailable, forKey: Keys.sdModelAvailable) }
+    /// Phase A.3 (v0.5.0.0): which SDXL variant the user currently has
+    /// selected — drives ModelDownloadManager's "current variant" + UI
+    /// surface. Stored as the variant enum's rawValue ("palettized" /
+    /// "loraColoring" / etc) so old persisted strings survive enum churn.
+    /// Defaults to `palettized` for users upgrading from v0.4.x (their
+    /// Apple base bundle stays the active model until they explicitly
+    /// switch).
+    public var sdxlModelVariant: String {
+        didSet { UserDefaults.standard.set(sdxlModelVariant, forKey: Keys.sdxlModelVariant) }
     }
+
+    /// Typed accessor for the variant. Setting auto-syncs the raw string.
+    /// Unknown raw strings (e.g. enum value removed) fall back to
+    /// `palettized` instead of crashing.
+    public var sdxlModelVariantTyped: SDXLModelCatalog.Variant {
+        get { SDXLModelCatalog.Variant(rawValue: sdxlModelVariant) ?? .palettized }
+        set { sdxlModelVariant = newValue.rawValue }
+    }
+
+    // sdModelAvailable removed in v0.5.0.0 — was a stale cached bool
+    // (optimistic-cache-vs-disk-truth anti-pattern, v0.4.1.0 → v0.4.1.1
+    // lesson). UI now calls
+    // `ModelDownloadManager.shared.isInstalled(for: settings.sdxlModelVariantTyped)`
+    // directly, which is the disk truth.
 
     private enum Keys {
         static let enginePreference = "engine.preference"
@@ -103,7 +121,11 @@ public final class SettingsStore {
         static let defaultGenerationSteps = "generation.defaultSteps"
         static let defaultGenerationCFG = "generation.defaultCFG"
         static let defaultGenerationSize = "generation.defaultSize"
+        // Legacy key from v0.4.x — no longer read (sdModelAvailable is
+        // computed), kept here so a future migration script can locate +
+        // remove it cleanly.
         static let sdModelAvailable = "generation.sdModelAvailable"
+        static let sdxlModelVariant = "generation.sdxlModelVariant"
     }
 
     /// Public initializer — primarily for `.shared`. A custom `UserDefaults`
@@ -143,6 +165,11 @@ public final class SettingsStore {
         self.defaultGenerationCFG = storedCFG == 0 ? GenerationDefaults.cfgScale : storedCFG
         self.defaultGenerationSize = ud.string(forKey: Keys.defaultGenerationSize)
             ?? "\(GenerationDefaults.width)x\(GenerationDefaults.height)"
-        self.sdModelAvailable = ud.bool(forKey: Keys.sdModelAvailable)
+
+        // Variant defaults to .palettized (Apple base) for users upgrading
+        // from v0.4.x — their existing 6.71 GB Apple bundle stays the active
+        // model until they explicitly switch in Settings.
+        self.sdxlModelVariant = ud.string(forKey: Keys.sdxlModelVariant)
+            ?? SDXLModelCatalog.Variant.palettized.rawValue
     }
 }

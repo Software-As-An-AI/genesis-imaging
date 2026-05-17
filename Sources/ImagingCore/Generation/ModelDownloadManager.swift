@@ -1,17 +1,19 @@
 import Foundation
 import Observation
 
-/// First-launch download orchestration for the SDXL Core ML bundle.
+/// First-launch download orchestration for SDXL Core ML bundles.
 ///
 /// Apple's pre-compiled `coreml-stable-diffusion-mixed-bit-palettization`
-/// bundle (6.71 GB zip → ~6 GB of `.mlmodelc` directories) is fetched on
-/// the customer's first generation attempt and persisted under
-/// `~/Library/Application Support/GenesisImaging/models/sdxl/` so the DMG
-/// stays small.
+/// bundle and the Phase A.3 ColoringBook LoRA-fused bundle are each fetched
+/// on the customer's first generation attempt for that variant, then
+/// persisted under
+/// `~/Library/Application Support/GenesisImaging/models/<variant>/` so the
+/// DMG stays small. Variants coexist on disk — switching the active variant
+/// in Settings does NOT redownload if the target is already installed.
 ///
-/// Phase state machine:
+/// Phase state machine, per variant:
 ///   .idle
-///     → .downloading(bytes, total, eta, throughput)
+///     → .downloading(bytes, total, throughput, eta)
 ///       → .verifying       (SHA256 streaming over zip)
 ///         → .extracting    (unzip into bundle dir)
 ///           → .ready
@@ -19,7 +21,10 @@ import Observation
 ///   .downloading → .idle  (cancel)
 ///
 /// Single source of truth for bundle URL/SHA/size/marker lives in
-/// `SDXLModelCatalog`. Variant pinned via `SDXLModelCatalog.defaultVariant`.
+/// `SDXLModelCatalog`. Currently-active variant is read from
+/// `SettingsStore.sdxlModelVariant`; backward-compat tek-variant accessors
+/// (`phase`, `bundleDirectory`, `isInstalled()`, `startDownload()`, …) all
+/// resolve to that variant.
 @MainActor
 @Observable
 public final class ModelDownloadManager {
@@ -38,33 +43,68 @@ public final class ModelDownloadManager {
         case failed(message: String)
     }
 
-    public private(set) var phase: Phase = .idle
+    // MARK: - Per-variant storage
 
-    /// Currently shipping variant — derived from `SDXLModelCatalog` so the
-    /// catalog stays the only place to bump versions. Bumping the variant
-    /// (or its `versionMarker`) forces a re-download on next launch.
-    public var variant: SDXLModelCatalog.Variant { SDXLModelCatalog.defaultVariant }
+    private var phases: [SDXLModelCatalog.Variant: Phase] = [:]
+    private var activeDownloaders: [SDXLModelCatalog.Variant: ModelDownloader] = [:]
 
-    public var expectedVersion: String { variant.versionMarker }
+    private init() {}
 
-    public var expectedSizeBytes: Int64 { variant.expectedSizeBytes }
+    // MARK: - Currently-selected variant (compat layer)
 
-    /// Bundle root directory. Lives under user-domain Application Support so
-    /// users can inspect / delete via Finder if needed (Settings exposes a
-    /// "Reveal in Finder" affordance). The actual `.mlmodelc` directories
-    /// live one or two levels deeper (Apple's zips archive their own folder
-    /// structure) — see `resourcesDirectory`.
-    public let bundleDirectory: URL = ModelDownloadManager.defaultBundleDirectory()
-
-    /// Directory that contains the `.mlmodelc` resources `StableDiffusion`
-    /// package expects. Computed from `bundleDirectory` + variant's
-    /// `resourcesSubpath`. This is the URL to hand to
-    /// `StableDiffusionXLPipeline(resourcesAt:)`.
-    public var resourcesDirectory: URL {
-        bundleDirectory.appendingPathComponent(variant.resourcesSubpath, isDirectory: true)
+    /// Variant the UI currently targets — comes from
+    /// `SettingsStore.sdxlModelVariant`. Defaults to `.palettized` for
+    /// users upgrading from v0.4.x (preserves the Apple base they already
+    /// have on disk).
+    public var variant: SDXLModelCatalog.Variant {
+        SettingsStore.shared.sdxlModelVariantTyped
     }
 
-    private static func defaultBundleDirectory() -> URL {
+    /// Compat: legacy `phase` reads the current variant's phase.
+    public var phase: Phase { phase(for: variant) }
+
+    /// Compat: legacy expected pin metadata for the current variant.
+    public var expectedVersion: String { variant.versionMarker }
+    public var expectedSizeBytes: Int64 { variant.expectedSizeBytes }
+
+    /// Compat: legacy bundle dir for the current variant.
+    public var bundleDirectory: URL { bundleDirectory(for: variant) }
+
+    /// Compat: legacy resources dir for the current variant.
+    public var resourcesDirectory: URL { resourcesDirectory(for: variant) }
+
+    // MARK: - Per-variant paths
+
+    /// Root directory holding all variant subdirectories.
+    public static var modelsRootDirectory: URL { defaultModelsRoot() }
+
+    /// Per-variant bundle root. Palettized keeps the legacy `sdxl/` path so
+    /// users upgrading from v0.4.x don't re-download the 6.71 GB Apple
+    /// bundle.
+    public func bundleDirectory(for variant: SDXLModelCatalog.Variant) -> URL {
+        Self.modelsRootDirectory.appendingPathComponent(
+            Self.subdirName(for: variant),
+            isDirectory: true
+        )
+    }
+
+    /// Resources sub-path resolved under the variant's bundle dir. The path
+    /// to hand to `StableDiffusionXLPipeline(resourcesAt:)`.
+    public func resourcesDirectory(for variant: SDXLModelCatalog.Variant) -> URL {
+        bundleDirectory(for: variant)
+            .appendingPathComponent(variant.resourcesSubpath, isDirectory: true)
+    }
+
+    private static func subdirName(for variant: SDXLModelCatalog.Variant) -> String {
+        switch variant {
+        case .palettized:     return "sdxl"             // legacy v0.4.x layout
+        case .base:           return "sdxl-base"
+        case .iosSplitEinsum: return "sdxl-ios"
+        case .loraColoring:   return "sdxl-lora-coloring"
+        }
+    }
+
+    private static func defaultModelsRoot() -> URL {
         let fm = FileManager.default
         let support = (try? fm.url(
             for: .applicationSupportDirectory,
@@ -75,28 +115,40 @@ public final class ModelDownloadManager {
         return support
             .appendingPathComponent("GenesisImaging", isDirectory: true)
             .appendingPathComponent("models", isDirectory: true)
-            .appendingPathComponent("sdxl", isDirectory: true)
     }
 
-    private var activeDownloader: ModelDownloader?
+    // MARK: - Phase access
 
-    private init() {}
+    /// Per-variant phase. SwiftUI views observing this Manager re-render
+    /// when any tracked variant's phase changes.
+    public func phase(for variant: SDXLModelCatalog.Variant) -> Phase {
+        phases[variant] ?? .idle
+    }
+
+    private func setPhase(_ phase: Phase, for variant: SDXLModelCatalog.Variant) {
+        phases[variant] = phase
+    }
 
     // MARK: - Presence
 
-    /// `true` if the bundle directory contains the expected version marker
-    /// AND every required entry from `SDXLModelCatalog.Variant.requiredEntries`
-    /// (checked under `resourcesDirectory`, not the raw extraction root —
-    /// Apple zips nest one or two folders deep).
-    /// Used at app launch + before every generation attempt.
+    /// Compat: legacy `isInstalled()` checks the current variant.
     public func isInstalled() -> Bool {
-        let marker = bundleDirectory.appendingPathComponent(".sdxl-version")
+        isInstalled(for: variant)
+    }
+
+    /// `true` if the variant's bundle directory contains the expected version
+    /// marker AND every required entry from the variant's `requiredEntries`
+    /// (checked under `resourcesDirectory(for:)`, not the raw extraction
+    /// root — Apple/our zips nest one or two folders deep).
+    public func isInstalled(for variant: SDXLModelCatalog.Variant) -> Bool {
+        let bundleDir = bundleDirectory(for: variant)
+        let marker = bundleDir.appendingPathComponent(".sdxl-version")
         guard FileManager.default.fileExists(atPath: marker.path),
               let stored = try? String(contentsOf: marker, encoding: .utf8)
         else { return false }
-        guard stored.trimmingCharacters(in: .whitespacesAndNewlines) == expectedVersion
+        guard stored.trimmingCharacters(in: .whitespacesAndNewlines) == variant.versionMarker
         else { return false }
-        let resources = resourcesDirectory
+        let resources = resourcesDirectory(for: variant)
         return variant.requiredEntries.allSatisfy { entry in
             FileManager.default.fileExists(
                 atPath: resources.appendingPathComponent(entry).path
@@ -104,122 +156,153 @@ public final class ModelDownloadManager {
         }
     }
 
-    /// Sync the cached `SettingsStore.sdModelAvailable` flag with current
-    /// disk state. Call from app launch + after download completion.
+    /// Sync per-variant cached state with disk truth. Call from app launch
+    /// + after any download completion. Sets `phase = .ready` for installed
+    /// variants and `.idle` for absent ones (overwrites stale state). The
+    /// legacy `SettingsStore.sdModelAvailable` getter is computed from the
+    /// currently-selected variant's truth, so no mirror flag to sync.
     public func refreshAvailabilityCache() {
-        let installed = isInstalled()
-        SettingsStore.shared.sdModelAvailable = installed
-        phase = installed ? .ready : .idle
+        for v in SDXLModelCatalog.Variant.allCases {
+            let installed = isInstalled(for: v)
+            // Don't clobber an in-flight .downloading / .verifying / .extracting.
+            switch phase(for: v) {
+            case .downloading, .verifying, .extracting:
+                continue
+            default:
+                setPhase(installed ? .ready : .idle, for: v)
+            }
+        }
     }
 
     // MARK: - Download
 
-    /// Kick the full download → verify → extract pipeline. Idempotent if
-    /// already running. Already-installed bundles short-circuit to `.ready`.
+    /// Compat: legacy `startDownload()` triggers download of the currently-
+    /// selected variant.
     public func startDownload() async {
-        if isInstalled() {
-            phase = .ready
-            SettingsStore.shared.sdModelAvailable = true
+        await startDownload(for: variant)
+    }
+
+    /// Kick the full download → verify → extract pipeline for the given
+    /// variant. Idempotent if already running. Already-installed bundles
+    /// short-circuit to `.ready`.
+    public func startDownload(for variant: SDXLModelCatalog.Variant) async {
+        if isInstalled(for: variant) {
+            setPhase(.ready, for: variant)
             return
         }
-        if case .downloading = phase { return }
-        if case .verifying = phase { return }
-        if case .extracting = phase { return }
+        switch phase(for: variant) {
+        case .downloading, .verifying, .extracting:
+            return
+        default:
+            break
+        }
 
-        phase = .downloading(bytesWritten: 0,
-                             totalBytes: expectedSizeBytes,
-                             throughputBytesPerSec: nil,
-                             etaSeconds: nil)
+        setPhase(.downloading(bytesWritten: 0,
+                              totalBytes: variant.expectedSizeBytes,
+                              throughputBytesPerSec: nil,
+                              etaSeconds: nil),
+                 for: variant)
 
         let url = variant.downloadURL
         let downloader = ModelDownloader(url: url) { [weak self] event in
-            // Delegate queue → MainActor for state mutation.
             Task { @MainActor [weak self] in
-                self?.handle(downloaderEvent: event)
+                self?.handle(downloaderEvent: event, for: variant)
             }
         }
-        activeDownloader = downloader
+        activeDownloaders[variant] = downloader
         downloader.start()
     }
 
-    /// Cancel an in-flight download. Clears resumeData so the next attempt
-    /// starts fresh (transient network failures keep resumeData; explicit
-    /// user cancel discards it).
+    /// Compat: legacy `cancelDownload()` cancels the current variant's run.
     public func cancelDownload() {
-        activeDownloader?.cancel()
-        activeDownloader = nil
-        // `cancel()` on the downloader emits `.cancelled` → handler resets phase
+        cancelDownload(for: variant)
     }
 
-    /// Remove the installed bundle (manual re-download from Settings).
-    /// Destructive — caller should confirm with the operator.
+    /// Cancel an in-flight download for the given variant.
+    public func cancelDownload(for variant: SDXLModelCatalog.Variant) {
+        activeDownloaders[variant]?.cancel()
+        activeDownloaders[variant] = nil
+        // `.cancel()` emits `.cancelled` → handler resets phase to .idle
+    }
+
+    /// Compat: legacy `uninstall()` removes the current variant's bundle.
     public func uninstall() {
-        try? FileManager.default.removeItem(at: bundleDirectory)
-        refreshAvailabilityCache()
+        uninstall(for: variant)
+    }
+
+    /// Remove the variant's installed bundle (manual re-download from
+    /// Settings). Destructive — caller should confirm with the operator.
+    public func uninstall(for variant: SDXLModelCatalog.Variant) {
+        try? FileManager.default.removeItem(at: bundleDirectory(for: variant))
+        // Refresh just this variant's phase; don't disturb others.
+        setPhase(isInstalled(for: variant) ? .ready : .idle, for: variant)
     }
 
     // MARK: - Downloader event handling
 
-    private func handle(downloaderEvent: ModelDownloader.Event) {
-        switch downloaderEvent {
+    private func handle(downloaderEvent event: ModelDownloader.Event,
+                        for variant: SDXLModelCatalog.Variant) {
+        switch event {
         case .progress(let bytes, let total, let throughput, let eta):
-            phase = .downloading(bytesWritten: bytes,
-                                 totalBytes: total,
-                                 throughputBytesPerSec: throughput,
-                                 etaSeconds: eta)
+            setPhase(.downloading(bytesWritten: bytes,
+                                  totalBytes: total,
+                                  throughputBytesPerSec: throughput,
+                                  etaSeconds: eta),
+                     for: variant)
         case .finished(let zipURL):
-            // Hop off MainActor for SHA256 streaming + unzip (both blocking).
-            phase = .verifying
+            setPhase(.verifying, for: variant)
             Task.detached { [weak self] in
-                await self?.verifyAndExtract(zipURL: zipURL)
+                await self?.verifyAndExtract(zipURL: zipURL, variant: variant)
             }
         case .cancelled:
-            phase = .idle
-            activeDownloader = nil
+            setPhase(.idle, for: variant)
+            activeDownloaders[variant] = nil
         case .failed(let message):
-            phase = .failed(message: message)
-            activeDownloader = nil
+            setPhase(.failed(message: message), for: variant)
+            activeDownloaders[variant] = nil
         }
     }
 
-    private nonisolated func verifyAndExtract(zipURL: URL) async {
-        let v = await MainActor.run { self.variant }
-        let bundleDir = await MainActor.run { self.bundleDirectory }
-        let expectedSize = await MainActor.run { self.expectedSizeBytes }
+    private nonisolated func verifyAndExtract(
+        zipURL: URL,
+        variant: SDXLModelCatalog.Variant
+    ) async {
+        let bundleDir = await MainActor.run { self.bundleDirectory(for: variant) }
 
         do {
             try ArchiveExtractor.verifyAndExtract(
                 zipURL: zipURL,
-                expectedSHA256: v.sha256,
+                expectedSHA256: variant.sha256,
                 destinationDir: bundleDir,
-                expectedSizeBytes: expectedSize
+                expectedSizeBytes: variant.expectedSizeBytes
             )
-            await MainActor.run { self.phase = .extracting }
+            await MainActor.run { self.setPhase(.extracting, for: variant) }
 
             // Marker write happens AFTER extract success
-            try v.versionMarker
+            try variant.versionMarker
                 .write(to: bundleDir.appendingPathComponent(".sdxl-version"),
                        atomically: true, encoding: .utf8)
 
-            // Cleanup staging zip
             try? FileManager.default.removeItem(at: zipURL)
 
             // Trust isInstalled() — not optimistic. Catches structural
             // mismatches (e.g. archive layout drift, missing tokenizer)
             // instead of advertising .ready and failing at first inference.
-            let trulyInstalled = await MainActor.run { self.isInstalled() }
+            // Lesson from v0.4.1.0 → v0.4.1.1 dissonance.
+            let trulyInstalled = await MainActor.run { self.isInstalled(for: variant) }
             if trulyInstalled {
                 await MainActor.run {
-                    self.phase = .ready
-                    SettingsStore.shared.sdModelAvailable = true
-                    self.activeDownloader?.cleanup()
-                    self.activeDownloader = nil
+                    self.setPhase(.ready, for: variant)
+                    self.activeDownloaders[variant]?.cleanup()
+                    self.activeDownloaders[variant] = nil
                 }
             } else {
                 await MainActor.run {
-                    self.phase = .failed(message: "Arşiv açıldı ama beklenen dosyalar bulunamadı — bundle yapısı değişmiş olabilir. Kaldır + tekrar indir denemeden destek isteyin.")
-                    SettingsStore.shared.sdModelAvailable = false
-                    self.activeDownloader = nil
+                    self.setPhase(
+                        .failed(message: "Arşiv açıldı ama beklenen dosyalar bulunamadı — bundle yapısı değişmiş olabilir. Kaldır + tekrar indir denemeden destek isteyin."),
+                        for: variant
+                    )
+                    self.activeDownloaders[variant] = nil
                 }
             }
         } catch {
@@ -228,8 +311,8 @@ public final class ModelDownloadManager {
                 return error.localizedDescription
             }()
             await MainActor.run {
-                self.phase = .failed(message: message)
-                self.activeDownloader = nil
+                self.setPhase(.failed(message: message), for: variant)
+                self.activeDownloaders[variant] = nil
             }
         }
     }
