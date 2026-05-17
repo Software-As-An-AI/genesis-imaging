@@ -95,4 +95,33 @@ public enum GenerationDefaults {
         (1024, 1536),
         (1536, 1024),
     ]
+
+    /// Friendly short label for a (width, height) pair. Uses semantic terms
+    /// (Kare / Dikey / Yatay) so the segmented picker can stay narrow and
+    /// the customer doesn't decode aspect ratios from raw pixel counts.
+    /// Falls back to verbatim `WxH` with no thousands separator (Turkish
+    /// locale otherwise renders "1024" as "1.024" — confusing in a
+    /// dimension context).
+    public static func shortSizeLabel(width w: Int, height h: Int) -> String {
+        switch (w, h) {
+        case (768, 768):    return "Kare S"
+        case (1024, 1024):  return "Kare M"
+        case (1024, 1536):  return "Dikey"
+        case (1536, 1024):  return "Yatay"
+        default:            return String(format: "%d×%d", w, h)
+        }
+    }
+
+    /// Verbatim `WxH` exposed as a stable token, useful for picker tags +
+    /// Settings persistence (`SettingsStore.defaultGenerationSize`).
+    public static func sizeTag(width w: Int, height h: Int) -> String {
+        return "\(w)x\(h)"
+    }
+
+    /// Full descriptive label combining semantic + dimensions, suitable
+    /// for Settings menu items where width allows the longer text.
+    public static func longSizeLabel(width w: Int, height h: Int) -> String {
+        let short = shortSizeLabel(width: w, height: h)
+        return String(format: "%@ (%d×%d)", short, w, h)
+    }
 }

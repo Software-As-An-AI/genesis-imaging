@@ -114,7 +114,8 @@ public struct SettingsView: View {
 
                 Picker("Varsayılan boyut", selection: $settings.defaultGenerationSize) {
                     ForEach(GenerationDefaults.supportedSizes, id: \.0) { (w, h) in
-                        Text("\(w)×\(h)").tag("\(w)x\(h)")
+                        Text(GenerationDefaults.longSizeLabel(width: w, height: h))
+                            .tag(GenerationDefaults.sizeTag(width: w, height: h))
                     }
                 }
                 .pickerStyle(.menu)
@@ -146,37 +147,119 @@ public struct SettingsView: View {
     @ViewBuilder
     private var generationModelStatus: some View {
         let manager = ModelDownloadManager.shared
-        if settings.sdModelAvailable {
+        switch manager.phase {
+        case .ready:
+            installedRow(manager)
+        case .downloading(let progress, let eta):
+            downloadingRow(progress: progress, eta: eta, manager: manager)
+        case .compiling:
+            compilingRow()
+        case .failed(let message):
+            failedRow(message: message, manager: manager)
+        case .idle:
+            if settings.sdModelAvailable {
+                installedRow(manager)
+            } else {
+                idleRow(manager)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func installedRow(_ manager: ModelDownloadManager) -> some View {
+        HStack {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Model yüklü")
+                Text(manager.expectedVersion)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+            Button("Kaldır", role: .destructive) {
+                manager.uninstall()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func idleRow(_ manager: ModelDownloadManager) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Model yüklü")
-                    Text(manager.expectedVersion)
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(.tertiary)
-                }
+                Image(systemName: "arrow.down.circle.dotted")
+                    .foregroundStyle(.orange)
+                Text("Model yüklü değil — ~5.4 GB indirilecek")
                 Spacer()
-                Button("Kaldır", role: .destructive) {
-                    manager.uninstall()
+                Button("İndir") {
+                    Task { await manager.startDownload() }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            Text("İlk indirme bir kez yapılır, sonraki açılışlarda gerek yok. Apple Neural Engine üzerinde 20-30s'de görüntü üretir.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder
+    private func downloadingRow(progress: Double, eta: Int?, manager: ModelDownloadManager) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                ProgressView(value: progress)
+                Text(String(format: "%.0f%%", progress * 100))
+                    .font(.caption.monospacedDigit())
+                    .frame(width: 42, alignment: .trailing)
+                Button("İptal", role: .cancel) {
+                    manager.cancelDownload()
                 }
             }
-        } else {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Image(systemName: "arrow.down.circle.dotted")
-                        .foregroundStyle(.orange)
-                    Text("Model yüklü değil — ~5.4 GB indirilecek")
-                    Spacer()
-                    Button("İndir") {
-                        Task { await manager.startDownload() }
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-                Text("v0.4.0.0: scaffold ship — gerçek model indirme v0.4.0.1'de aktif edilecek. URL pinning + SHA256 verification + xcrun coremlcompiler henüz yazılmadı.")
+            if let eta = eta {
+                Text("Yaklaşık \(eta) sn kaldı")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("İndiriliyor…")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func compilingRow() -> some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Model derleniyor (xcrun coremlcompiler)…")
+                .font(.callout)
+        }
+    }
+
+    @ViewBuilder
+    private func failedRow(message: String, manager: ModelDownloadManager) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("İndirme şu an mümkün değil")
+                        .font(.callout.weight(.semibold))
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+            }
+            HStack {
+                Button("Tekrar dene") {
+                    Task { await manager.startDownload() }
+                }
+                Button("Sıfırla") {
+                    manager.cancelDownload()
+                }
             }
         }
     }

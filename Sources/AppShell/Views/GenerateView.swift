@@ -14,6 +14,7 @@ struct GenerateView: View {
     @State private var viewModel = GenerationViewModel()
     @Bindable private var settings = SettingsStore.shared
     @State private var manager = ModelDownloadManager.shared
+    @Environment(\.openSettings) private var openSettings
 
     /// Optional handoff closures provided by the parent (MainView). When
     /// the customer taps "Upscale'e gönder" or "Düzenle", MainView
@@ -58,7 +59,7 @@ struct GenerateView: View {
                 }
                 Spacer()
                 Button("Ayarlar'a git") {
-                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                    openSettings()
                 }
                 .buttonStyle(.bordered)
             }
@@ -136,11 +137,13 @@ struct GenerateView: View {
                     .frame(width: 70, alignment: .leading)
                 Picker("", selection: sizeBinding) {
                     ForEach(GenerationDefaults.supportedSizes, id: \.0) { (w, h) in
-                        Text("\(w)×\(h)").tag("\(w)x\(h)")
+                        Text(GenerationDefaults.shortSizeLabel(width: w, height: h))
+                            .tag(GenerationDefaults.sizeTag(width: w, height: h))
                     }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .help("Kare S 768×768 · Kare M 1024×1024 · Dikey 1024×1536 · Yatay 1536×1024")
             }
             HStack(spacing: 12) {
                 Text("Tohum")

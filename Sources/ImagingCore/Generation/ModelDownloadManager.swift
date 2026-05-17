@@ -94,15 +94,15 @@ public final class ModelDownloadManager {
     // MARK: - Download (scaffold)
 
     /// Trigger the first-launch download + compile sequence. v0.4.0.0 ships
-    /// this as a stub that just transitions to `.failed` with a clear
-    /// message — full URLSession wiring lands in v0.4.0.1 once the Hugging
-    /// Face mirror URLs and SHA256 pins are recorded in
-    /// `scripts/fetch-sdxl-coreml-model.sh`.
+    /// this as a stub that surfaces a customer-readable explanation — full
+    /// URLSession wiring lands in v0.4.0.1 once the Hugging Face mirror
+    /// URLs + SHA256 pins are recorded in scripts/fetch-sdxl-coreml-model.sh.
     public func startDownload() async {
         phase = .downloading(progress: 0.0, etaSeconds: nil)
-        // TODO (v0.4.0.1): URLSession download task, resumable, SHA256
-        // verify, then xcrun coremlcompiler for each .mlpackage → .mlmodelc.
-        phase = .failed(message: "v0.4.0.0 scaffold — SDXL download endpoint will be wired in v0.4.0.1. Operator: see scripts/fetch-sdxl-coreml-model.sh (pending creation).")
+        // Give the UI one tick to render the spinner before we collapse to
+        // the explanation — otherwise the button press feels like a no-op.
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        phase = .failed(message: "Bu sürümde (v0.4.0.0) görüntü oluşturma arayüzü hazır ama model indirme kanalı henüz açılmadı. Bir sonraki sürümde (v0.4.0.1) gerçek indirme + SDXL kullanıma alınacak. Beklerken Üret bölümünü gezebilir, slider'ları + prompt formatını deneyebilirsiniz.")
     }
 
     /// Cancel an in-flight download. v0.4.0.0 no-op (no real download yet).
