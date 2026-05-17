@@ -59,6 +59,11 @@ Resources/bin/.ncnn-version
 # Step 0 spike workspace — Python venv + downloaded artifacts ignored,
 # inspection scripts + SPIKE_REPORT.md committed as substrate.
 tools/coreml-conversion/.venv/
+tools/coreml-conversion/.venv-lora/
+tools/coreml-conversion/sdxl-base-fp16/
+tools/coreml-conversion/sdxl-coloring-book-fused/
+tools/coreml-conversion/build/
+tools/coreml-conversion/lora-weights/
 tools/coreml-conversion/*.pth
 tools/coreml-conversion/*.mlmodel
 tools/coreml-conversion/*.mlmodelc
