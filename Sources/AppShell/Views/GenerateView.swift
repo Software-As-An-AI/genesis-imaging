@@ -21,23 +21,6 @@ struct GenerateView: View {
     let onSendToUpscale: (URL) -> Void
     let onSendToEditor: (URL) -> Void
 
-    /// Routes the customer to the Settings scene. SwiftUI's
-    /// `@Environment(\.openSettings)` is macOS 14+ but the Swift toolchain
-    /// type inference is flaky across SDK versions (CI 2026-05-17 fail).
-    /// AppKit `NSApp.sendAction(showSettingsWindow:)` is what `openSettings()`
-    /// does under the hood anyway — call it directly + async dispatch so
-    /// the button press handler doesn't race the window-key state. Tries
-    /// the modern selector first, falls back to the pre-macOS-13 name.
-    private func openSettings() {
-        DispatchQueue.main.async {
-            let modern = Selector(("showSettingsWindow:"))
-            let legacy = Selector(("showPreferencesWindow:"))
-            if !NSApp.sendAction(modern, to: nil, from: nil) {
-                _ = NSApp.sendAction(legacy, to: nil, from: nil)
-            }
-        }
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
@@ -74,8 +57,8 @@ struct GenerateView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
-                Button("Ayarlar'a git") {
-                    openSettings()
+                SettingsLink {
+                    Text("Ayarlar'a git")
                 }
                 .buttonStyle(.bordered)
             }
