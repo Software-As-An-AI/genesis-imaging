@@ -24,8 +24,11 @@ public final class GenerationViewModel {
         case failed(String)
     }
 
-    public var prompt: String = "A coloring book page of a fox in a forest, simple bold line art, thick black outline, white background, minimal detail, kid-friendly, high contrast, vector style, clean illustration"
-    public var negativePrompt: String = "color, gradient, shading, watercolor, photo, realistic, complex background, dense vegetation, intricate detail, hatching, grayscale, texture"
+    /// Initial prompt comes from the currently-selected variant's
+    /// `defaultPrompt` (so the LoRA variant ships trigger words pre-filled).
+    /// User edits freely from there.
+    public var prompt: String
+    public var negativePrompt: String
     public var steps: Int
     public var cfgScale: Double
     public var width: Int
@@ -36,15 +39,41 @@ public final class GenerationViewModel {
     public private(set) var state: State = .idle
     public private(set) var engineName: String = ""
 
+    /// Tracks the variant the prompt/negativePrompt were seeded from. When
+    /// the user changes variant in Settings, GenerateView calls
+    /// `applyVariantDefaults()` to refresh — but only if user hasn't
+    /// already typed anything new (we don't want to silently nuke their
+    /// custom prompt).
+    private var seededFromVariant: SDXLModelCatalog.Variant
+
     private var task: Task<Void, Never>? = nil
 
     public init() {
         let settings = SettingsStore.shared
+        let variant = settings.sdxlModelVariantTyped
+        self.prompt = variant.defaultPrompt
+        self.negativePrompt = variant.defaultNegativePrompt
+        self.seededFromVariant = variant
         self.steps = settings.defaultGenerationSteps
         self.cfgScale = settings.defaultGenerationCFG
         let (w, h) = Self.parseSize(settings.defaultGenerationSize)
         self.width = w
         self.height = h
+    }
+
+    /// Re-seed prompt + negativePrompt from the currently-selected variant
+    /// IF the user hasn't already customized them (still equal to the last
+    /// variant's defaults). Idempotent.
+    public func applyVariantDefaults() {
+        let variant = SettingsStore.shared.sdxlModelVariantTyped
+        guard variant != seededFromVariant else { return }
+
+        let promptUnchanged = (prompt == seededFromVariant.defaultPrompt)
+        let negUnchanged = (negativePrompt == seededFromVariant.defaultNegativePrompt)
+
+        if promptUnchanged { prompt = variant.defaultPrompt }
+        if negUnchanged { negativePrompt = variant.defaultNegativePrompt }
+        seededFromVariant = variant
     }
 
     public var isRunning: Bool {

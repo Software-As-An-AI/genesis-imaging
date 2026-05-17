@@ -93,7 +93,8 @@ public struct SettingsView: View {
                 }
             }
 
-            Section("Görüntü Oluşturma (SDXL)") {
+            Section("Görüntü Oluşturma (Model)") {
+                variantPicker
                 generationModelStatus
 
                 Picker("Varsayılan adım", selection: $settings.defaultGenerationSteps) {
@@ -148,63 +149,84 @@ public struct SettingsView: View {
         "realesrgan-ncnn-vulkan v0.2.0"
     }
 
+    /// Variant selector — surfaces only `isUserSelectable` variants. Switching
+    /// the variant updates SettingsStore.sdxlModelVariant (persisted) and the
+    /// status row below auto-updates because ModelDownloadManager's compat
+    /// shims resolve to the new selection.
+    @ViewBuilder
+    private var variantPicker: some View {
+        Picker("Model varyantı", selection: Binding(
+            get: { settings.sdxlModelVariantTyped },
+            set: { settings.sdxlModelVariantTyped = $0 }
+        )) {
+            ForEach(SDXLModelCatalog.Variant.allCases.filter(\.isUserSelectable),
+                    id: \.self) { v in
+                Text(v.humanLabel).tag(v)
+            }
+        }
+        .pickerStyle(.menu)
+    }
+
     @ViewBuilder
     private var generationModelStatus: some View {
         let manager = ModelDownloadManager.shared
-        switch manager.phase {
+        let v = settings.sdxlModelVariantTyped
+        switch manager.phase(for: v) {
         case .ready:
-            installedRow(manager)
+            installedRow(manager, variant: v)
         case .downloading(let bytes, let total, let throughput, let eta):
             downloadingRow(bytes: bytes, total: total, throughput: throughput,
-                           eta: eta, manager: manager)
+                           eta: eta, manager: manager, variant: v)
         case .verifying:
             phaseSpinnerRow(label: "Bütünlük doğrulanıyor (SHA256)…")
         case .extracting:
             phaseSpinnerRow(label: "Model arşivi açılıyor…")
         case .failed(let message):
-            failedRow(message: message, manager: manager)
+            failedRow(message: message, manager: manager, variant: v)
         case .idle:
-            if manager.isInstalled(for: settings.sdxlModelVariantTyped) {
-                installedRow(manager)
+            if manager.isInstalled(for: v) {
+                installedRow(manager, variant: v)
             } else {
-                idleRow(manager)
+                idleRow(manager, variant: v)
             }
         }
     }
 
     @ViewBuilder
-    private func installedRow(_ manager: ModelDownloadManager) -> some View {
+    private func installedRow(_ manager: ModelDownloadManager,
+                              variant: SDXLModelCatalog.Variant) -> some View {
         HStack {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Model yüklü")
-                Text(manager.expectedVersion)
+                Text("Model yüklü — \(variant.humanLabel)")
+                Text(variant.versionMarker)
                     .font(.caption2.monospaced())
                     .foregroundStyle(.tertiary)
             }
             Spacer()
             Button("Kaldır", role: .destructive) {
-                manager.uninstall()
+                manager.uninstall(for: variant)
             }
         }
     }
 
     @ViewBuilder
-    private func idleRow(_ manager: ModelDownloadManager) -> some View {
+    private func idleRow(_ manager: ModelDownloadManager,
+                         variant: SDXLModelCatalog.Variant) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Image(systemName: "arrow.down.circle.dotted")
                     .foregroundStyle(.orange)
-                Text("Model yüklü değil — ~6.7 GB indirilecek")
+                Text("Yüklü değil — \(byteCount(variant.expectedSizeBytes)) indirilecek")
                 Spacer()
                 Button("İndir") {
                     showDownloadSheet = true
-                    Task { await manager.startDownload() }
+                    Task { await manager.startDownload(for: variant) }
                 }
                 .buttonStyle(.borderedProminent)
             }
-            Text("İlk indirme bir kez yapılır, sonraki açılışlarda gerek yok. Apple Neural Engine üzerinde 20-30s'de görüntü üretir.")
+            Text("İlk indirme bir kez yapılır. \(variantHint(for: variant))")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -213,7 +235,8 @@ public struct SettingsView: View {
 
     @ViewBuilder
     private func downloadingRow(bytes: Int64, total: Int64, throughput: Double?,
-                                eta: Int?, manager: ModelDownloadManager) -> some View {
+                                eta: Int?, manager: ModelDownloadManager,
+                                variant: SDXLModelCatalog.Variant) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             let progress = total > 0 ? Double(bytes) / Double(total) : 0
             HStack {
@@ -222,7 +245,7 @@ public struct SettingsView: View {
                     .font(.caption.monospacedDigit())
                     .frame(width: 42, alignment: .trailing)
                 Button("İptal", role: .cancel) {
-                    manager.cancelDownload()
+                    manager.cancelDownload(for: variant)
                 }
             }
             HStack(spacing: 8) {
@@ -241,6 +264,17 @@ public struct SettingsView: View {
                 }
                 Spacer()
             }
+        }
+    }
+
+    private func variantHint(for variant: SDXLModelCatalog.Variant) -> String {
+        switch variant {
+        case .palettized:
+            return "Apple'ın genel-amaçlı SDXL temel modeli — manzara, portre, soyut. Geniş prompt yelpazesi destekler."
+        case .loraColoring:
+            return "Çocuk boyama kitabı için ince-ayarlanmış — kalın siyah outline, beyaz arka plan, kapalı şekiller. Trigger words otomatik: ColoringBookAF, Coloring Book."
+        case .base, .iosSplitEinsum:
+            return ""
         }
     }
 
@@ -267,13 +301,14 @@ public struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func failedRow(message: String, manager: ModelDownloadManager) -> some View {
+    private func failedRow(message: String, manager: ModelDownloadManager,
+                           variant: SDXLModelCatalog.Variant) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("İndirme başarısız oldu")
+                    Text("İndirme başarısız oldu — \(variant.humanLabel)")
                         .font(.callout.weight(.semibold))
                     Text(message)
                         .font(.caption2)
@@ -286,10 +321,10 @@ public struct SettingsView: View {
             HStack {
                 Button("Tekrar dene") {
                     showDownloadSheet = true
-                    Task { await manager.startDownload() }
+                    Task { await manager.startDownload(for: variant) }
                 }
                 Button("Sıfırla") {
-                    manager.cancelDownload()
+                    manager.cancelDownload(for: variant)
                 }
             }
         }

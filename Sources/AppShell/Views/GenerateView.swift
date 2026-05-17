@@ -41,21 +41,27 @@ struct GenerateView: View {
         .sheet(isPresented: $showDownloadSheet) {
             ModelDownloadProgressView(isPresented: $showDownloadSheet)
         }
+        .onChange(of: settings.sdxlModelVariant) { _, _ in
+            // Variant swapped in Settings — refresh prompt defaults if user
+            // hasn't customized them yet (idempotent + non-destructive).
+            viewModel.applyVariantDefaults()
+        }
     }
 
     // MARK: - Banner
 
     @ViewBuilder
     private var modelStatusBanner: some View {
-        if !manager.isInstalled(for: settings.sdxlModelVariantTyped) {
+        let variant = settings.sdxlModelVariantTyped
+        if !manager.isInstalled(for: variant) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "arrow.down.circle.dotted")
                     .foregroundStyle(.orange)
                     .font(.title3)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("SDXL modeli yüklü değil")
+                    Text("\(variant.humanLabel) yüklü değil")
                         .font(.callout.weight(.semibold))
-                    Text("Görüntü oluşturma için Apple Core ML SDXL bundle'ı (~6.7 GB) indirilmeli. İndirme bir kez yapılır, sonraki açılışlarda gerek yok.")
+                    Text("Görüntü oluşturma için bundle (~\(byteCount(variant.expectedSizeBytes))) indirilmeli. İndirme bir kez yapılır, sonraki açılışlarda gerek yok.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -63,7 +69,7 @@ struct GenerateView: View {
                 Spacer()
                 Button {
                     showDownloadSheet = true
-                    Task { await manager.startDownload() }
+                    Task { await manager.startDownload(for: variant) }
                 } label: {
                     Label("İndir", systemImage: "arrow.down.circle")
                 }
@@ -77,6 +83,10 @@ struct GenerateView: View {
             )
             .cornerRadius(8)
         }
+    }
+
+    private func byteCount(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
     // MARK: - Prompt inputs
