@@ -65,6 +65,31 @@ public final class SettingsStore {
         didSet { UserDefaults.standard.set(lineArtEnhancePreset, forKey: Keys.lineArtEnhancePreset) }
     }
 
+    // MARK: - Image generation (v0.4.0.0, SDXL + line-art LoRA)
+
+    /// Default sampler step count exposed in the Generate view slider.
+    public var defaultGenerationSteps: Int {
+        didSet { UserDefaults.standard.set(defaultGenerationSteps, forKey: Keys.defaultGenerationSteps) }
+    }
+
+    /// Default classifier-free guidance scale.
+    public var defaultGenerationCFG: Double {
+        didSet { UserDefaults.standard.set(defaultGenerationCFG, forKey: Keys.defaultGenerationCFG) }
+    }
+
+    /// Default output edge — `"1024x1024"` / `"768x768"` etc. Stored as
+    /// raw string to survive enum churn; parsed on read.
+    public var defaultGenerationSize: String {
+        didSet { UserDefaults.standard.set(defaultGenerationSize, forKey: Keys.defaultGenerationSize) }
+    }
+
+    /// True after `ModelDownloadManager` confirms the SDXL bundle is on
+    /// disk + compiled. Cached so the Generate view can disable itself
+    /// without re-checking on every render.
+    public var sdModelAvailable: Bool {
+        didSet { UserDefaults.standard.set(sdModelAvailable, forKey: Keys.sdModelAvailable) }
+    }
+
     private enum Keys {
         static let enginePreference = "engine.preference"
         static let defaultModel = "engine.defaultModel"
@@ -75,6 +100,10 @@ public final class SettingsStore {
         static let despecklePreset = "output.despecklePreset"
         static let lineArtEnhanceEnabled = "output.lineArtEnhanceEnabled"
         static let lineArtEnhancePreset = "output.lineArtEnhancePreset"
+        static let defaultGenerationSteps = "generation.defaultSteps"
+        static let defaultGenerationCFG = "generation.defaultCFG"
+        static let defaultGenerationSize = "generation.defaultSize"
+        static let sdModelAvailable = "generation.sdModelAvailable"
     }
 
     /// Public initializer — primarily for `.shared`. A custom `UserDefaults`
@@ -105,5 +134,15 @@ public final class SettingsStore {
             self.lineArtEnhanceEnabled = false
         }
         self.lineArtEnhancePreset = ud.string(forKey: Keys.lineArtEnhancePreset) ?? "normal"
+
+        // Image generation (v0.4.0.0): defaults match GenerationDefaults so
+        // ViewModel + UI + Engine reach the same baseline without copying.
+        let storedSteps = ud.integer(forKey: Keys.defaultGenerationSteps)
+        self.defaultGenerationSteps = storedSteps == 0 ? GenerationDefaults.steps : storedSteps
+        let storedCFG = ud.double(forKey: Keys.defaultGenerationCFG)
+        self.defaultGenerationCFG = storedCFG == 0 ? GenerationDefaults.cfgScale : storedCFG
+        self.defaultGenerationSize = ud.string(forKey: Keys.defaultGenerationSize)
+            ?? "\(GenerationDefaults.width)x\(GenerationDefaults.height)"
+        self.sdModelAvailable = ud.bool(forKey: Keys.sdModelAvailable)
     }
 }

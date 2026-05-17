@@ -20,6 +20,31 @@ public struct MainView: View {
     @State private var eraserSession: EraserSession? = nil
     @State private var eraserLoadError: String? = nil
 
+    // v0.4.0.0: top-level section switch — Generate / Upscale / Edit.
+    // Upscale is the historical default; Generate gates on SDXL model
+    // download (handled inside GenerateView). Edit (eraser) is reachable
+    // via row actions OR by being routed from Generate's result panel.
+    @State private var activeSection: MainSection = .upscale
+
+    enum MainSection: String, CaseIterable, Identifiable {
+        case generate, upscale, edit
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .generate: return "Üret"
+            case .upscale:  return "Büyüt"
+            case .edit:     return "Düzenle"
+            }
+        }
+        var icon: String {
+            switch self {
+            case .generate: return "sparkles"
+            case .upscale:  return "arrow.up.right.square"
+            case .edit:     return "pencil.tip.crop.circle"
+            }
+        }
+    }
+
     /// Owned for the lifetime of the window. Seeded with the same defaults
     /// the single-file picker offers so the batch UI feels continuous.
     @StateObject private var queue = BatchQueue(
@@ -30,7 +55,32 @@ public struct MainView: View {
     public init() {}
 
     public var body: some View {
-        Group {
+        VStack(spacing: 0) {
+            sectionPicker
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+            Divider()
+            sectionContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private var sectionContent: some View {
+        switch activeSection {
+        case .generate:
+            GenerateView(
+                onSendToUpscale: { url in
+                    // Route generated image into the single-file upscale flow.
+                    viewModel.selectInput(url)
+                    activeSection = .upscale
+                },
+                onSendToEditor: { url in
+                    presentEraserSheet(for: url)
+                }
+            )
+        case .upscale:
             if queue.items.count >= 2 {
                 BatchQueueView(
                     queue: queue,
@@ -40,7 +90,19 @@ public struct MainView: View {
             } else {
                 singleFileBody
             }
+        case .edit:
+            EditSectionPlaceholder(presentEraser: presentEraserSheet)
         }
+    }
+
+    private var sectionPicker: some View {
+        Picker("", selection: $activeSection) {
+            ForEach(MainSection.allCases) { section in
+                Label(section.label, systemImage: section.icon).tag(section)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
     }
 
     /// Engine provider closure handed to `BatchQueueView`. Resolves the user's
@@ -111,6 +173,52 @@ public struct MainView: View {
     private struct EraserSessionWrapper: Identifiable {
         let id = UUID()
         let session: EraserSession
+    }
+
+    /// Edit section placeholder — the eraser editor itself is sheet-based,
+    /// so this view explains the section and offers a "pick a file" path.
+    /// The eraser is also reachable via Upscale row actions (Done items) +
+    /// pre-upscale source (v0.3.5.3).
+    private struct EditSectionPlaceholder: View {
+        let presentEraser: (URL) -> Void
+        @State private var showImporter = false
+
+        var body: some View {
+            VStack(spacing: 16) {
+                Image(systemName: "pencil.tip.crop.circle")
+                    .font(.system(size: 56))
+                    .foregroundStyle(.tertiary)
+                Text("Silgi Editörü")
+                    .font(.title2)
+                Text("Açmak için bir görüntü seçin. Üretilen veya büyütülen dosyalardaki istenmeyen detayları silebilirsiniz.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 460)
+                Button {
+                    showImporter = true
+                } label: {
+                    Label("Görüntü seç…", systemImage: "photo")
+                }
+                .buttonStyle(.borderedProminent)
+                Text("Veya: Üretim sonrası 'Düzenle' butonu, ya da Büyüt bölümünde done item satırındaki silgi ikonu.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 8)
+            }
+            .padding(40)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .fileImporter(
+                isPresented: $showImporter,
+                allowedContentTypes: [.image],
+                allowsMultipleSelection: false
+            ) { result in
+                if case let .success(urls) = result, let first = urls.first {
+                    presentEraser(first)
+                }
+            }
+        }
     }
 
     private func presentEraserSheet(for url: URL) {

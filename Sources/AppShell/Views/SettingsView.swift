@@ -92,10 +92,38 @@ public struct SettingsView: View {
                 }
             }
 
+            Section("Görüntü Oluşturma (SDXL)") {
+                generationModelStatus
+
+                Picker("Varsayılan adım", selection: $settings.defaultGenerationSteps) {
+                    Text("Hızlı (15)").tag(15)
+                    Text("Standart (30)").tag(30)
+                    Text("Yüksek (50)").tag(50)
+                }
+                .pickerStyle(.menu)
+
+                HStack {
+                    Text("Varsayılan CFG")
+                    Spacer()
+                    Slider(value: $settings.defaultGenerationCFG, in: 5...15, step: 0.5)
+                        .frame(width: 160)
+                    Text(String(format: "%.1f", settings.defaultGenerationCFG))
+                        .font(.callout.monospacedDigit())
+                        .frame(width: 36, alignment: .trailing)
+                }
+
+                Picker("Varsayılan boyut", selection: $settings.defaultGenerationSize) {
+                    ForEach(GenerationDefaults.supportedSizes, id: \.0) { (w, h) in
+                        Text("\(w)×\(h)").tag("\(w)x\(h)")
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+
             Section("Hakkında") {
                 LabeledContent("Uygulama", value: "Genesis Imaging")
                 LabeledContent("Sürüm", value: appVersion)
-                LabeledContent("Açıklama", value: "On-device upscaling — Apple Silicon native")
+                LabeledContent("Açıklama", value: "On-device image creation + enhancement — Apple Silicon native")
                 LabeledContent("ncnn binary", value: ncnnBinaryVersion)
             }
         }
@@ -113,6 +141,44 @@ public struct SettingsView: View {
     private var ncnnBinaryVersion: String {
         // Faz 1 placeholder — real version surfaced via NcnnEngine.probe() in Faz 2 wire-up.
         "realesrgan-ncnn-vulkan v0.2.0"
+    }
+
+    @ViewBuilder
+    private var generationModelStatus: some View {
+        let manager = ModelDownloadManager.shared
+        if settings.sdModelAvailable {
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Model yüklü")
+                    Text(manager.expectedVersion)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                Button("Kaldır", role: .destructive) {
+                    manager.uninstall()
+                }
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: "arrow.down.circle.dotted")
+                        .foregroundStyle(.orange)
+                    Text("Model yüklü değil — ~5.4 GB indirilecek")
+                    Spacer()
+                    Button("İndir") {
+                        Task { await manager.startDownload() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                Text("v0.4.0.0: scaffold ship — gerçek model indirme v0.4.0.1'de aktif edilecek. URL pinning + SHA256 verification + xcrun coremlcompiler henüz yazılmadı.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     private var engineHint: String {
