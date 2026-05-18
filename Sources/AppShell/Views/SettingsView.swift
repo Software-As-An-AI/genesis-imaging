@@ -273,6 +273,8 @@ public struct SettingsView: View {
             return "Apple'ın genel-amaçlı SDXL temel modeli — manzara, portre, soyut. Geniş prompt yelpazesi destekler."
         case .loraColoring:
             return "Çocuk boyama kitabı için ince-ayarlanmış — kalın siyah outline, beyaz arka plan, kapalı şekiller. Trigger words otomatik: ColoringBookAF, Coloring Book."
+        case .fluxKlein:
+            return "FLUX.2 Klein 4B — Apple Silicon MLX framework. Çocuk boyama estetiği için en güçlü; ~35 sn üretim; ~11 GB indirme. Phase A.4 deneysel."
         case .base, .iosSplitEinsum:
             return ""
         }

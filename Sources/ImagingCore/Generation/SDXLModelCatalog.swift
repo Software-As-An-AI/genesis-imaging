@@ -1,17 +1,33 @@
 import Foundation
 
-/// Single source of truth for the SDXL Core ML bundle Phase A.2 ships.
+/// Engine layer that consumes a variant's bundle. Variant carries this so the
+/// engine factory + ModelDownloadManager know which inference + download path
+/// to use. Pre-Phase-A.4 every variant was implicitly `.coreMLSDXL`; FLUX.2
+/// Klein 4B (Phase A.4, v0.6.0.0) introduces `.mlxFlux`.
+public enum EngineKind: String, Sendable, CaseIterable {
+    /// Apple ml-stable-diffusion + Core ML compiled .mlmodelc bundle.
+    /// Single-file zip download, single Resources/ dir layout.
+    case coreMLSDXL
+
+    /// flux-2-swift-mlx + MLX-Swift framework on Apple Silicon.
+    /// Multi-file download (transformer + VAE + Qwen3 text encoder, 3 separate
+    /// HF repos). Bundle layout per flux-2-swift-mlx's expected paths under
+    /// `~/Library/Caches/models/`.
+    case mlxFlux
+}
+
+/// Single source of truth for the on-device generation model bundles.
 ///
-/// Apple's official mixed-bit-palettization repo on Hugging Face — pre-compiled
-/// `.mlmodelc` directories inside a single zip, openrail++ license,
-/// anonymous-pull OK.
+/// Originally named for SDXL (Phase A.2) when only SDXL variants existed;
+/// Phase A.4 (v0.6.0.0) extends the catalog with FLUX.2 Klein 4B via MLX. Name
+/// kept for callsite stability — rename to `ModelCatalog` deferred to a
+/// separate refactor cycle. (Phase A.5+ candidate.)
 ///
-/// SHA256 + size pinned via `scripts/fetch-sdxl-coreml-model.sh` (drift CI runs
-/// weekly to detect upstream re-uploads — see `.github/workflows/sdxl-pin-drift.yml`).
+/// SHA256 + size pinned per variant; drift CI runs weekly for SDXL palettized
+/// (`.github/workflows/sdxl-pin-drift.yml`), FLUX equivalent ships with Step 9.
 ///
-/// When changing the default variant (e.g. switching to base 7.04 GB on quality
-/// complaints), update `Model.defaultVariant` only — `ModelDownloadManager` +
-/// `StableDiffusionCoreMLEngine` read through this catalog.
+/// Currently-active variant comes from `SettingsStore.sdxlModelVariant`;
+/// `ModelDownloadManager` + engine factory dispatch on it.
 public enum SDXLModelCatalog {
 
     /// The bundle variant Phase A.2 currently ships. Picker UI may surface
@@ -39,22 +55,46 @@ public enum SDXLModelCatalog {
         /// (proven by local smoke test 2026-05-17).
         case loraColoring
 
+        /// Phase A.4 — FLUX.2 Klein 4B native Swift MLX bundle.
+        /// 1-day spike (2026-05-18) + Nadezhda evaluation pack confirmed
+        /// dramatic aesthetic improvement vs SDXL+LoRA for kid-coloring-book
+        /// minimalist style. Apache 2.0 commercial-OK (transformer + Qwen3
+        /// text encoder both). Multi-file download (transformer + VAE +
+        /// Qwen3) wired in Step 3. Engine wrapper around flux-2-swift-mlx
+        /// landed in Step 4.
+        case fluxKlein
+
+        /// Which inference + download path the variant uses. Engine factory
+        /// (Step 2) and ModelDownloadManager (Step 3) branch on this.
+        public var engineKind: EngineKind {
+            switch self {
+            case .palettized, .base, .iosSplitEinsum, .loraColoring:
+                return .coreMLSDXL
+            case .fluxKlein:
+                return .mlxFlux
+            }
+        }
+
         public var humanLabel: String {
             switch self {
             case .palettized:     return "Apple Base SDXL"
             case .base:           return "Base (yedek)"
             case .iosSplitEinsum: return "iOS split-einsum"
             case .loraColoring:   return "Çocuk Boyama Kitabı (LoRA)"
+            case .fluxKlein:      return "FLUX.2 Klein (deneysel)"
             }
         }
 
         /// Whether the variant is offered to the customer in Settings'
         /// Görüntü Oluşturma picker. `.base` / `.iosSplitEinsum` are
-        /// developer fallbacks only.
+        /// developer fallbacks. `.fluxKlein` stays gated until Steps 3-4
+        /// wire multi-file download + MLX engine; flipping to `true` lands
+        /// with Step 6 (Settings UI picker extension).
         public var isUserSelectable: Bool {
             switch self {
             case .palettized, .loraColoring:    return true
             case .base, .iosSplitEinsum:        return false
+            case .fluxKlein:                    return false  // unlocked in Step 6
             }
         }
 
@@ -84,6 +124,15 @@ public enum SDXLModelCatalog {
                     "https://apps.softwareasan.ai/genesis-imaging/models/" +
                     "sdxl-coloring-book-lora-v1.zip"
                 )!
+            case .fluxKlein:
+                // Phase A.4 placeholder — Step 3 multi-file refactor replaces
+                // this single-URL accessor with `downloadFiles: [DownloadFile]`.
+                // For now the transformer URL is the primary, VAE + Qwen3
+                // are out-of-band (auto-downloaded by flux-2-swift-mlx).
+                return URL(string:
+                    "https://huggingface.co/black-forest-labs/FLUX.2-klein-4B/" +
+                    "resolve/main/flux-2-klein-4b.safetensors"
+                )!
             }
         }
 
@@ -96,6 +145,11 @@ public enum SDXLModelCatalog {
                 return "a00f335d990588c97c347d97f7e92080f8cb23342c454f4a4d853a59bea1e2b5"
             case .loraColoring:
                 return "c676295a9492f84455abca80355c116f41c5eac0d47f8c8a18a88c03c695f136"
+            case .fluxKlein:
+                // Transformer SHA only — Step 3 will surface VAE + Qwen3 hashes
+                // via the multi-file array. Captured from HF LFS x-linked-etag
+                // 2026-05-18 spike download.
+                return nil  // pin in Step 3 after multi-file refactor
             case .base, .iosSplitEinsum:
                 return nil
             }
@@ -105,6 +159,7 @@ public enum SDXLModelCatalog {
             switch self {
             case .palettized:     return 6_711_666_087
             case .loraColoring:   return 6_432_524_320
+            case .fluxKlein:      return 7_200_000_000 // transformer only; total ~11 GB w/ VAE + Qwen3 (Step 3)
             case .base:           return 7_040_000_000 // approximate; pin before activation
             case .iosSplitEinsum: return 3_050_000_000 // approximate; pin before activation
             }
@@ -119,6 +174,7 @@ public enum SDXLModelCatalog {
             case .base:           return "base-1.0-apple-2023-07"
             case .iosSplitEinsum: return "iossplit-1.0-apple-2023-07"
             case .loraColoring:   return "loracoloring-v1-coloringbookredmond-v2-2026-05"
+            case .fluxKlein:      return "fluxklein-v1-bfl-klein4b-bf16-qwen3-4b-mlx-4bit-2026-05"
             }
         }
 
@@ -148,6 +204,21 @@ public enum SDXLModelCatalog {
                     "VAEEncoder.mlmodelc",
                     "vocab.json",
                     "merges.txt",
+                ]
+            case .fluxKlein:
+                // flux-2-swift-mlx layout (per 2026-05-18 spike):
+                //   bundleDir/
+                //   ├── black-forest-labs/FLUX.2-klein-4B-klein4b-bf16/
+                //   │   ├── flux-2-klein-4b.safetensors
+                //   │   └── model_index.json
+                //   └── lmstudio-community/Qwen3-4B-MLX-4bit/
+                //       ├── config.json
+                //       ├── tokenizer.json
+                //       └── ... (Qwen3 MLX weights)
+                // Step 3 will codify exact relative paths after multi-file
+                // refactor lands; for now expose the key transformer file.
+                return [
+                    "black-forest-labs/FLUX.2-klein-4B-klein4b-bf16/flux-2-klein-4b.safetensors",
                 ]
             }
         }
@@ -179,6 +250,12 @@ public enum SDXLModelCatalog {
                 return "coreml-stable-diffusion-xl-base-ios_split_einsum_compiled/compiled"
             case .loraColoring:
                 return "coreml-stable-diffusion-xl-coloring-book_compiled/compiled"
+            case .fluxKlein:
+                // flux-2-swift-mlx resolves paths relative to its own
+                // `~/Library/Caches/models/` root by repo identifier; our
+                // bundleDir for fluxKlein IS that root. Empty subpath means
+                // resourcesDirectory(for: .fluxKlein) == bundleDirectory.
+                return ""
             }
         }
 
@@ -199,6 +276,12 @@ public enum SDXLModelCatalog {
                 return "ColoringBookAF, Coloring Book, a coloring book page of a fox in a forest, "
                      + "simple bold line art, thick black outline, white background, "
                      + "minimal detail, kid-friendly, clean illustration"
+            case .fluxKlein:
+                // FLUX Klein produces minimalist coloring-book aesthetic
+                // natively with simpler prompts (no "thick black outline /
+                // vector style" stylistic spell needed — model bias does it).
+                // Spike (2026-05-18 ~/Desktop/flux-nadezhda-test/) confirmed.
+                return "A coloring book page of a fox in a forest"
             }
         }
 
@@ -210,6 +293,11 @@ public enum SDXLModelCatalog {
                 return "color, gradient, shading, watercolor, photo, realistic, "
                      + "complex background, dense vegetation, intricate detail, "
                      + "hatching, grayscale, texture"
+            case .fluxKlein:
+                // Klein 4B at guidance scale 1.0 ignores negative prompts
+                // anyway (no classifier-free guidance at scale 1.0); return
+                // empty to make this contract explicit.
+                return ""
             }
         }
     }

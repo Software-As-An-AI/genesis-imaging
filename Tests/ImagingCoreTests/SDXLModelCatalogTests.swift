@@ -133,4 +133,86 @@ final class SDXLModelCatalogTests: XCTestCase {
         XCTAssertEqual(SDXLModelCatalog.Variant.palettized.humanLabel, "Apple Base SDXL")
         XCTAssertEqual(SDXLModelCatalog.Variant.loraColoring.humanLabel, "Çocuk Boyama Kitabı (LoRA)")
     }
+
+    // MARK: - Phase A.4 EngineKind + .fluxKlein variant
+
+    func test_engineKind_sdxlVariantsAreCoreML() {
+        for v in [SDXLModelCatalog.Variant.palettized,
+                  .base,
+                  .iosSplitEinsum,
+                  .loraColoring] {
+            XCTAssertEqual(v.engineKind, .coreMLSDXL,
+                           "\(v) must dispatch to Core ML engine")
+        }
+    }
+
+    func test_engineKind_fluxVariantIsMLX() {
+        XCTAssertEqual(SDXLModelCatalog.Variant.fluxKlein.engineKind, .mlxFlux,
+                       "FLUX Klein must dispatch to MLX engine")
+    }
+
+    func test_fluxKlein_humanLabelAdvertisesExperimental() {
+        // Honest framing: FLUX is "preview-class commercial illustration"
+        // per research. UI label must signal that explicitly so customers
+        // don't expect DALL-E parity.
+        let label = SDXLModelCatalog.Variant.fluxKlein.humanLabel
+        XCTAssertTrue(label.contains("FLUX"))
+        XCTAssertTrue(label.lowercased().contains("deneysel"),
+                      "Label must signal experimental status, got: \(label)")
+    }
+
+    func test_fluxKlein_notUserSelectableUntilStep6() {
+        // Phase A.4 sequential ship: variant exists in catalog from Step 1
+        // but stays gated from UI until multi-file download (Step 3) +
+        // MLX engine (Step 4) + Settings picker extension (Step 6) land.
+        XCTAssertFalse(SDXLModelCatalog.Variant.fluxKlein.isUserSelectable,
+                       "FLUX Klein must stay gated until Step 6 unlocks it")
+    }
+
+    func test_fluxKlein_downloadURLPointsAtHF() {
+        // Phase A.4 lockdown #3: HF direct primary (anonymous-pull OK,
+        // no token needed). Step 3 multi-file refactor adds VAE + Qwen3 URLs.
+        let url = SDXLModelCatalog.Variant.fluxKlein.downloadURL
+        XCTAssertEqual(url.scheme, "https")
+        XCTAssertEqual(url.host, "huggingface.co")
+        XCTAssertTrue(url.path.contains("black-forest-labs/FLUX.2-klein-4B"))
+    }
+
+    func test_fluxKlein_versionMarkerIdentifiesFLUX() {
+        let marker = SDXLModelCatalog.Variant.fluxKlein.versionMarker
+        XCTAssertTrue(marker.contains("fluxklein"))
+        XCTAssertTrue(marker.contains("qwen3"),
+                      "Marker should reference text encoder pinned (Qwen3)")
+    }
+
+    func test_fluxKlein_defaultPromptIsMinimal() {
+        // Klein 4B produces coloring-book aesthetic natively without
+        // SDXL-style stylistic prompt scaffolding. defaultPrompt is a
+        // bare subject sentence — no "thick black outline / vector style"
+        // because Klein bias does that automatically (spike-proven).
+        let prompt = SDXLModelCatalog.Variant.fluxKlein.defaultPrompt
+        XCTAssertFalse(prompt.contains("thick black outline"),
+                       "Klein doesn't need outline-spelling; bias does it")
+        XCTAssertFalse(prompt.contains("vector style"),
+                       "Klein doesn't need vector-style spelling")
+        XCTAssertTrue(prompt.lowercased().contains("coloring book"),
+                      "Subject still mentions coloring book to anchor category")
+    }
+
+    func test_fluxKlein_defaultNegativePromptEmpty() {
+        // Klein 4B default guidance scale is 1.0 — at scale 1.0 the
+        // pipeline doesn't run classifier-free guidance, so negative prompts
+        // are ignored. Empty default makes that contract explicit; user can
+        // still type one (no-op until guidance > 1.0).
+        XCTAssertEqual(SDXLModelCatalog.Variant.fluxKlein.defaultNegativePrompt, "")
+    }
+
+    func test_engineKind_allCasesDistinct() {
+        // Future-proof: when adding a third EngineKind (e.g. .mlxFlux2,
+        // .coreMLSD3), don't accidentally collide raw values.
+        let raws = EngineKind.allCases.map(\.rawValue)
+        XCTAssertEqual(raws.count, Set(raws).count)
+        XCTAssertEqual(EngineKind.allCases.count, 2,
+                       "Phase A.4 ships 2 engine kinds; bump assertion when adding more")
+    }
 }

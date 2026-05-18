@@ -101,6 +101,7 @@ public final class ModelDownloadManager {
         case .base:           return "sdxl-base"
         case .iosSplitEinsum: return "sdxl-ios"
         case .loraColoring:   return "sdxl-lora-coloring"
+        case .fluxKlein:      return "flux-klein"      // Phase A.4 — flux-2-swift-mlx
         }
     }
 
