@@ -68,6 +68,24 @@ public struct MainView: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 6)
         }
+        .sheet(item: Binding(
+            get: { eraserSession.map { EraserSessionWrapper(session: $0) } },
+            set: { newValue in if newValue == nil { eraserSession = nil } }
+        )) { wrapper in
+            EraserEditorView(
+                session: wrapper.session,
+                onSaved: { _ in eraserSession = nil },
+                onCancel: { eraserSession = nil }
+            )
+        }
+        .alert("Eraser açılamadı", isPresented: Binding(
+            get: { eraserLoadError != nil },
+            set: { if !$0 { eraserLoadError = nil } }
+        )) {
+            Button("Tamam", role: .cancel) { eraserLoadError = nil }
+        } message: {
+            Text(eraserLoadError ?? "")
+        }
     }
 
     /// Global build-provenance footer — visible on every section. Replaces
@@ -182,24 +200,6 @@ public struct MainView: View {
             if case let .success(urls) = result {
                 handleSelected(urls: urls)
             }
-        }
-        .sheet(item: Binding(
-            get: { eraserSession.map { EraserSessionWrapper(session: $0) } },
-            set: { newValue in if newValue == nil { eraserSession = nil } }
-        )) { wrapper in
-            EraserEditorView(
-                session: wrapper.session,
-                onSaved: { _ in eraserSession = nil },
-                onCancel: { eraserSession = nil }
-            )
-        }
-        .alert("Eraser açılamadı", isPresented: Binding(
-            get: { eraserLoadError != nil },
-            set: { if !$0 { eraserLoadError = nil } }
-        )) {
-            Button("Tamam", role: .cancel) { eraserLoadError = nil }
-        } message: {
-            Text(eraserLoadError ?? "")
         }
     }
 
