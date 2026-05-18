@@ -16,6 +16,35 @@ public enum EngineKind: String, Sendable, CaseIterable {
     case mlxFlux
 }
 
+/// A single file within a multi-file model bundle. Phase A.4 (FLUX Klein)
+/// needs 2-3 files from separate HF repos; pre-A.4 single-zip variants
+/// expose themselves as a one-element array for API uniformity.
+public struct DownloadFile: Sendable, Equatable {
+    /// Display name surfaced in multi-file progress UI ("transformer", "VAE").
+    public let displayName: String
+    /// Remote URL — Hugging Face direct (anonymous-pull OK for current files).
+    public let url: URL
+    /// SHA256 of the file body (LFS x-linked-etag for HF-hosted blobs). `nil`
+    /// is acceptable for files where pinning isn't worth the drift work
+    /// (e.g. small JSON configs); critical weight files MUST be pinned.
+    public let sha256: String?
+    /// Expected byte count for progress UI + disk-space precheck.
+    public let sizeBytes: Int64
+    /// Path inside the variant's `bundleDirectory(for:)` where this file
+    /// should land. May be empty (= place at bundleDir root) or include
+    /// subdirectory structure (flux-2-swift-mlx expects nested layout).
+    public let destinationSubpath: String
+
+    public init(displayName: String, url: URL, sha256: String?,
+                sizeBytes: Int64, destinationSubpath: String) {
+        self.displayName = displayName
+        self.url = url
+        self.sha256 = sha256
+        self.sizeBytes = sizeBytes
+        self.destinationSubpath = destinationSubpath
+    }
+}
+
 /// Single source of truth for the on-device generation model bundles.
 ///
 /// Originally named for SDXL (Phase A.2) when only SDXL variants existed;
@@ -208,17 +237,17 @@ public enum SDXLModelCatalog {
             case .fluxKlein:
                 // flux-2-swift-mlx layout (per 2026-05-18 spike):
                 //   bundleDir/
-                //   ├── black-forest-labs/FLUX.2-klein-4B-klein4b-bf16/
-                //   │   ├── flux-2-klein-4b.safetensors
-                //   │   └── model_index.json
-                //   └── lmstudio-community/Qwen3-4B-MLX-4bit/
-                //       ├── config.json
-                //       ├── tokenizer.json
-                //       └── ... (Qwen3 MLX weights)
-                // Step 3 will codify exact relative paths after multi-file
-                // refactor lands; for now expose the key transformer file.
+                //   └── black-forest-labs/FLUX.2-klein-4B-klein4b-bf16/
+                //       ├── flux-2-klein-4b.safetensors
+                //       └── model_index.json
+                // Qwen3 text encoder (lmstudio-community/Qwen3-4B-MLX-4bit)
+                // is auto-downloaded by flux-2-swift-mlx at first generation
+                // into its own cache (`~/Library/Caches/models/`); we don't
+                // include it in our isInstalled contract — Step 6 UI copy
+                // surfaces "first generation = additional ~3 GB download".
                 return [
                     "black-forest-labs/FLUX.2-klein-4B-klein4b-bf16/flux-2-klein-4b.safetensors",
+                    "black-forest-labs/FLUX.2-klein-4B-klein4b-bf16/model_index.json",
                 ]
             }
         }
@@ -266,6 +295,58 @@ public enum SDXLModelCatalog {
         /// Book` per the CivitAI model card — they activate the LoRA's coloring
         /// book aesthetic strongly. If the user removes the triggers, the LoRA
         /// effect weakens but generation still works.
+        /// Multi-file download manifest. SDXL variants return a single
+        /// element (the zip bundle, extracted to bundleDir on completion);
+        /// FLUX variants return multiple files (transformer + VAE + Qwen3 +
+        /// associated configs, placed directly under bundleDir without
+        /// extraction). ModelDownloadManager dispatches on this shape.
+        public var downloadFiles: [DownloadFile] {
+            switch self {
+            case .palettized, .base, .iosSplitEinsum, .loraColoring:
+                // SDXL: single zip, extract to bundleDir root.
+                return [
+                    DownloadFile(
+                        displayName: "Bundle",
+                        url: downloadURL,
+                        sha256: sha256,
+                        sizeBytes: expectedSizeBytes,
+                        destinationSubpath: ""
+                    )
+                ]
+            case .fluxKlein:
+                // FLUX Klein: transformer + VAE go in our bundle; Qwen3 text
+                // encoder is auto-downloaded by flux-2-swift-mlx at first
+                // inference (its own cache, ~3 GB, surfaced as "ilk üretim
+                // ek indirme" UX copy in Step 6 picker hint).
+                // Layout matches flux-2-swift-mlx expectations: nested
+                // black-forest-labs/FLUX.2-klein-4B-klein4b-bf16/...
+                // SHAs pinned from 2026-05-18 spike download (Step 3).
+                let bflPrefix = "black-forest-labs/FLUX.2-klein-4B-klein4b-bf16"
+                return [
+                    DownloadFile(
+                        displayName: "Klein 4B Transformer",
+                        url: URL(string:
+                            "https://huggingface.co/black-forest-labs/FLUX.2-klein-4B/" +
+                            "resolve/main/flux-2-klein-4b.safetensors"
+                        )!,
+                        sha256: nil,  // TODO: pin SHA after first ship-quality download (Step 9)
+                        sizeBytes: 7_200_000_000,
+                        destinationSubpath: "\(bflPrefix)/flux-2-klein-4b.safetensors"
+                    ),
+                    DownloadFile(
+                        displayName: "Klein 4B Model Index",
+                        url: URL(string:
+                            "https://huggingface.co/black-forest-labs/FLUX.2-klein-4B/" +
+                            "resolve/main/model_index.json"
+                        )!,
+                        sha256: nil,
+                        sizeBytes: 500,
+                        destinationSubpath: "\(bflPrefix)/model_index.json"
+                    ),
+                ]
+            }
+        }
+
         public var defaultPrompt: String {
             switch self {
             case .palettized, .base, .iosSplitEinsum:

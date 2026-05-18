@@ -198,6 +198,19 @@ public final class ModelDownloadManager {
             break
         }
 
+        // Phase A.4 dispatch: SDXL variants use the single-zip download path
+        // (Phase A.2 logic, unchanged). FLUX variants use the new multi-file
+        // path (Step 3) — transformer + model_index sequentially placed at
+        // their bundleDir-relative destinations, no unzip step.
+        switch variant.engineKind {
+        case .coreMLSDXL:
+            startSingleZipDownload(for: variant)
+        case .mlxFlux:
+            startMultiFileDownload(for: variant)
+        }
+    }
+
+    private func startSingleZipDownload(for variant: SDXLModelCatalog.Variant) {
         setPhase(.downloading(bytesWritten: 0,
                               totalBytes: variant.expectedSizeBytes,
                               throughputBytesPerSec: nil,
@@ -212,6 +225,182 @@ public final class ModelDownloadManager {
         }
         activeDownloaders[variant] = downloader
         downloader.start()
+    }
+
+    /// FLUX multi-file download: sequential per-file `ModelDownloader`
+    /// runs. Progress emit is per-current-file (no aggregate across files
+    /// in v1 — Step 6 picker UI surfaces "indirme i/N · <displayName>"
+    /// if it wants the breakdown). On all files complete, places each at
+    /// its destinationSubpath under `bundleDirectory(for:)`, writes
+    /// version marker, flips to `.ready`.
+    private func startMultiFileDownload(for variant: SDXLModelCatalog.Variant) {
+        let files = variant.downloadFiles
+        let bundleDir = bundleDirectory(for: variant)
+        try? FileManager.default.createDirectory(
+            at: bundleDir, withIntermediateDirectories: true
+        )
+        setPhase(.downloading(bytesWritten: 0,
+                              totalBytes: files.first?.sizeBytes ?? 0,
+                              throughputBytesPerSec: nil,
+                              etaSeconds: nil),
+                 for: variant)
+        downloadNextFluxFile(for: variant, files: files, index: 0)
+    }
+
+    private func downloadNextFluxFile(
+        for variant: SDXLModelCatalog.Variant,
+        files: [DownloadFile],
+        index: Int
+    ) {
+        guard index < files.count else {
+            // All files downloaded — verify + mark ready.
+            setPhase(.verifying, for: variant)
+            Task.detached { [weak self] in
+                await self?.finalizeFluxDownload(variant: variant, files: files)
+            }
+            return
+        }
+
+        let file = files[index]
+        let destURL = bundleDirectory(for: variant)
+            .appendingPathComponent(file.destinationSubpath, isDirectory: false)
+        try? FileManager.default.createDirectory(
+            at: destURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        // Short-circuit if file already exists at destination with correct size.
+        let fm = FileManager.default
+        if fm.fileExists(atPath: destURL.path),
+           let attrs = try? fm.attributesOfItem(atPath: destURL.path),
+           let size = attrs[.size] as? Int64,
+           size == file.sizeBytes {
+            downloadNextFluxFile(for: variant, files: files, index: index + 1)
+            return
+        }
+
+        let downloader = ModelDownloader(url: file.url) { [weak self] event in
+            Task { @MainActor [weak self] in
+                self?.handleFluxFileEvent(
+                    event,
+                    variant: variant,
+                    files: files,
+                    index: index,
+                    destURL: destURL
+                )
+            }
+        }
+        activeDownloaders[variant] = downloader
+        downloader.start()
+    }
+
+    private func handleFluxFileEvent(
+        _ event: ModelDownloader.Event,
+        variant: SDXLModelCatalog.Variant,
+        files: [DownloadFile],
+        index: Int,
+        destURL: URL
+    ) {
+        switch event {
+        case .progress(let bytes, _, let throughput, let eta):
+            // Use the per-file totalBytes from catalog for stability — the
+            // remote may not report content-length (especially HF redirects).
+            setPhase(.downloading(bytesWritten: bytes,
+                                  totalBytes: files[index].sizeBytes,
+                                  throughputBytesPerSec: throughput,
+                                  etaSeconds: eta),
+                     for: variant)
+        case .finished(let tmpURL):
+            // Move tmp file to destination.
+            do {
+                try? FileManager.default.removeItem(at: destURL)
+                try FileManager.default.moveItem(at: tmpURL, to: destURL)
+            } catch {
+                setPhase(
+                    .failed(message: "Dosya yerleştirilemedi: \(error.localizedDescription)"),
+                    for: variant
+                )
+                activeDownloaders[variant] = nil
+                return
+            }
+            activeDownloaders[variant] = nil
+            // Advance to next file.
+            downloadNextFluxFile(for: variant, files: files, index: index + 1)
+        case .cancelled:
+            setPhase(.idle, for: variant)
+            activeDownloaders[variant] = nil
+        case .failed(let message):
+            setPhase(.failed(message: message), for: variant)
+            activeDownloaders[variant] = nil
+        }
+    }
+
+    private nonisolated func finalizeFluxDownload(
+        variant: SDXLModelCatalog.Variant,
+        files: [DownloadFile]
+    ) async {
+        let bundleDir = await MainActor.run { self.bundleDirectory(for: variant) }
+
+        // Per-file SHA verify (where pinned). Skipped for files with sha256 == nil.
+        for file in files where file.sha256 != nil {
+            let path = bundleDir.appendingPathComponent(
+                file.destinationSubpath, isDirectory: false
+            )
+            do {
+                let actual = try ArchiveExtractor.streamingSHA256(of: path)
+                guard actual.caseInsensitiveCompare(file.sha256!) == .orderedSame else {
+                    await MainActor.run {
+                        self.setPhase(
+                            .failed(message: "SHA256 mismatch: \(file.displayName) " +
+                                    "(beklenen \(file.sha256!.prefix(12))…, " +
+                                    "gerçek \(actual.prefix(12))…)"),
+                            for: variant
+                        )
+                    }
+                    return
+                }
+            } catch {
+                await MainActor.run {
+                    self.setPhase(
+                        .failed(message: "SHA256 hesaplanamadı: \(error.localizedDescription)"),
+                        for: variant
+                    )
+                }
+                return
+            }
+        }
+
+        // Write marker. Multi-file variants share the same marker mechanism
+        // as single-zip variants — presence + correct version string gates
+        // isInstalled.
+        do {
+            try variant.versionMarker
+                .write(to: bundleDir.appendingPathComponent(".sdxl-version"),
+                       atomically: true, encoding: .utf8)
+        } catch {
+            await MainActor.run {
+                self.setPhase(
+                    .failed(message: "Sürüm işareti yazılamadı: \(error.localizedDescription)"),
+                    for: variant
+                )
+            }
+            return
+        }
+
+        // Truth check: isInstalled now confirms presence + version marker.
+        let trulyInstalled = await MainActor.run { self.isInstalled(for: variant) }
+        if trulyInstalled {
+            await MainActor.run {
+                self.setPhase(.ready, for: variant)
+            }
+        } else {
+            await MainActor.run {
+                self.setPhase(
+                    .failed(message: "Çoklu-dosya indirme tamamlandı ama isInstalled false — beklenen dosyalardan biri eksik."),
+                    for: variant
+                )
+            }
+        }
     }
 
     /// Compat: legacy `cancelDownload()` cancels the current variant's run.
