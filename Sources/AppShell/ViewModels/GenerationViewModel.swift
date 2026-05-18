@@ -96,7 +96,10 @@ public final class GenerationViewModel {
             height: height
         )
         state = .loading
-        let engine = StableDiffusionCoreMLEngine()
+        // Phase A.4: engine resolved from current variant via factory —
+        // .palettized / .loraColoring → StableDiffusionCoreMLEngine,
+        // .fluxKlein → Flux2KleinEngine (Step 4 fleshes inference).
+        let engine = GenerationEngineFactory.engineForCurrentVariant()
         engineName = engine.engineName
 
         task = Task { [weak self] in
