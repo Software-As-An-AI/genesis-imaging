@@ -85,3 +85,7 @@ Resources/models/.coreml-version
 .build/cache/coreml/
 tools/coreml-conversion/bench-fixtures/
 tools/coreml-conversion/bench-outputs/
+
+# Phase A.4 FLUX.2 Klein 4B spike workspace — binary + symlink + outputs
+# (reproducible: setup-flux-env.sh during Phase A.4 execution)
+tools/flux-spike/
