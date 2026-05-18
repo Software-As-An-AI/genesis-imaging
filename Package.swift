@@ -54,6 +54,11 @@ let package = Package(
             dependencies: [
                 "ImagingCore",
                 .product(name: "StableDiffusion", package: "ml-stable-diffusion"),
+                // Phase A.4 — Flux2KleinEngine consumes Flux2Core. Target
+                // name "CoreMLEngine" now houses BOTH Core ML and MLX engines;
+                // Phase A.5 may extract Flux2KleinEngine into a dedicated
+                // FluxEngine target if the boundary keeps getting blurry.
+                .product(name: "Flux2Core", package: "flux-2-swift-mlx"),
             ],
             linkerSettings: [
                 .linkedFramework("CoreML"),
