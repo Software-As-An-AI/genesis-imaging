@@ -161,12 +161,11 @@ final class SDXLModelCatalogTests: XCTestCase {
                       "Label must signal experimental status, got: \(label)")
     }
 
-    func test_fluxKlein_notUserSelectableUntilStep6() {
-        // Phase A.4 sequential ship: variant exists in catalog from Step 1
-        // but stays gated from UI until multi-file download (Step 3) +
-        // MLX engine (Step 4) + Settings picker extension (Step 6) land.
-        XCTAssertFalse(SDXLModelCatalog.Variant.fluxKlein.isUserSelectable,
-                       "FLUX Klein must stay gated until Step 6 unlocks it")
+    func test_fluxKlein_unlockedInStep6() {
+        // Step 6 unlock: variant joined the user-selectable set once
+        // Steps 1-4 wired the catalog + download + engine path.
+        XCTAssertTrue(SDXLModelCatalog.Variant.fluxKlein.isUserSelectable,
+                      "Step 6 unlocks FLUX Klein for the Settings picker")
     }
 
     func test_fluxKlein_downloadURLPointsAtHF() {

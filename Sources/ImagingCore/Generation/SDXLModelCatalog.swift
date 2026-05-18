@@ -123,7 +123,7 @@ public enum SDXLModelCatalog {
             switch self {
             case .palettized, .loraColoring:    return true
             case .base, .iosSplitEinsum:        return false
-            case .fluxKlein:                    return false  // unlocked in Step 6
+            case .fluxKlein:                    return true   // Step 6 unlock
             }
         }
 

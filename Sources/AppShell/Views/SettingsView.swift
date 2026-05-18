@@ -129,6 +129,22 @@ public struct SettingsView: View {
                 LabeledContent("Açıklama", value: "On-device image creation + enhancement — Apple Silicon native")
                 LabeledContent("ncnn binary", value: ncnnBinaryVersion)
             }
+
+            Section("Lisanslar / Third-Party") {
+                Text("Genesis Imaging is built on the following open-source / third-party model assets:")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                LabeledContent("Apple ml-stable-diffusion") { Text("MIT License").font(.caption.monospaced()) }
+                LabeledContent("SDXL Base Palettized (Apple)") { Text("OpenRAIL++").font(.caption.monospaced()) }
+                LabeledContent("ColoringBookRedmond-V2 LoRA") { Text("OpenRAIL-M (artificialguybr)").font(.caption.monospaced()) }
+                LabeledContent("FLUX.2 Klein 4B") { Text("Apache 2.0 (Black Forest Labs)").font(.caption.monospaced()) }
+                LabeledContent("Qwen3-4B-MLX-4bit") { Text("Apache 2.0 (Qwen / lmstudio-community)").font(.caption.monospaced()) }
+                LabeledContent("mlx-swift") { Text("MIT License (Apple)").font(.caption.monospaced()) }
+                LabeledContent("flux-2-swift-mlx") { Text("MIT License (VincentGourbin)").font(.caption.monospaced()) }
+                LabeledContent("Real-ESRGAN ncnn") { Text("BSD-3-Clause (xinntao)").font(.caption.monospaced()) }
+                LabeledContent("Sparkle") { Text("MIT License").font(.caption.monospaced()) }
+            }
         }
         .formStyle(.grouped)
         .navigationTitle("Ayarlar")
