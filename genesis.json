@@ -1,5 +1,5 @@
 {
-  "version": "0.5.0.0",
+  "version": "0.6.0.0",
   "project": {
     "name": "Genesis Imaging",
     "slug": "genesis-imaging",
@@ -11,7 +11,7 @@
   "services": {},
   "platform": {
     "os": "macos",
-    "min_version": "14.0",
+    "min_version": "15.0",
     "architecture": [
       "arm64"
     ],
@@ -32,12 +32,13 @@
       "status": "in-development"
     },
     "faz_2": {
-      "engine": "core-ml",
+      "engine": "core-ml + mlx",
       "target_device": "apple-gpu",
       "status": "shipping",
       "variants": {
-        "palettized": "Apple Base SDXL (6.71 GB, palettized)",
-        "loraColoring": "Çocuk Boyama Kitabı LoRA (5.99 GB, fused ColoringBookRedmond-V2)"
+        "palettized": "Apple Base SDXL (6.71 GB, palettized, Core ML)",
+        "loraColoring": "Çocuk Boyama Kitabı LoRA (5.99 GB, fused ColoringBookRedmond-V2, Core ML)",
+        "fluxKlein": "FLUX.2 Klein 4B (~11 GB total, Apache 2.0, MLX-Swift native)"
       }
     }
   },
