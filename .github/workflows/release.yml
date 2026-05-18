@@ -10,7 +10,10 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-14
+    # Phase A.4 (v0.6.0.0): bumped macos-14 → macos-15 (Sequoia + Xcode 16 +
+    # Swift 6.0) because Package.swift was bumped to swift-tools-version:6.0
+    # for flux-2-swift-mlx integration. macos-14 ships Swift 5.10, breaks.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
         with:
